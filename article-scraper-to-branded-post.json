@@ -1,0 +1,507 @@
+{
+  "name": "Article Scraper To Branded Post",
+  "description": "Scrapes article page, generates branded image and layout code via Claude, saves to Sheets, generates and responds with social post.",
+  "node_count": 15,
+  "workflow": {
+    "nodes": [
+      {
+        "id": "webhook-scrape",
+        "name": "Webhook Scrape",
+        "type": "n8n-nodes-base.webhook",
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "path": "goud-scrape",
+          "options": {},
+          "httpMethod": "POST",
+          "responseMode": "responseNode"
+        },
+        "typeVersion": 2
+      },
+      {
+        "id": "webhook-post",
+        "name": "Webhook Post",
+        "type": "n8n-nodes-base.webhook",
+        "position": [
+          0,
+          400
+        ],
+        "parameters": {
+          "path": "goud-post",
+          "options": {},
+          "httpMethod": "POST",
+          "responseMode": "responseNode"
+        },
+        "typeVersion": 2
+      },
+      {
+        "id": "fetch-page-web",
+        "name": "Fetch Article Page",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [
+          240,
+          0
+        ],
+        "parameters": {
+          "url": "={{ $json.body.url }}",
+          "options": {
+            "response": {
+              "response": {
+                "responseFormat": "text"
+              }
+            }
+          }
+        },
+        "typeVersion": 4.4
+      },
+      {
+        "id": "scrape-meta-web",
+        "name": "Scrape Title & Photo",
+        "type": "n8n-nodes-base.code",
+        "position": [
+          480,
+          0
+        ],
+        "parameters": {
+          "jsCode": "const html = $input.item.json.data;\nconst url = $('Webhook Scrape').item.json.body.url;\n\nlet title = '';\nconst ogTitle = html.match(/<meta[^>]+property=[\"']og:title[\"'][^>]+content=[\"']([^\"']+)[\"']/i);\nconst titleTag = html.match(/<title[^>]*>([^<]+)<\\/title>/i);\nif (ogTitle) title = ogTitle[1];\nelse if (titleTag) title = titleTag[1];\ntitle = title.replace(/ - \u0643\u0648\u062f.*$/, '').replace(/ - \u06af\u0648\u062f.*$/, '').trim();\n\nlet photo = '';\nconst ogImage = html.match(/<meta[^>]+property=[\"']og:image[\"'][^>]+content=[\"']([^\"']+)[\"']/i);\nconst ogImage2 = html.match(/<meta[^>]+content=[\"']([^\"']+)[\"'][^>]+property=[\"']og:image[\"']/i);\nif (ogImage) photo = ogImage[1];\nelse if (ogImage2) photo = ogImage2[1];\n\nif (!title || !photo) throw new Error('Impossible de scraper titre ou photo');\n\nreturn { title, photo, url };"
+        },
+        "typeVersion": 2
+      },
+      {
+        "id": "hcti-web",
+        "name": "Create Branded Image",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [
+          720,
+          0
+        ],
+        "parameters": {
+          "url": "https://[domain]/v1/image",
+          "method": "POST",
+          "options": {},
+          "jsonBody": "={\n  \"html\": \"<link href='[REDACTED_URL_WITH_AUTH] rel='stylesheet'><div style='width:1080px;height:1080px;position:relative;font-family:Cairo,sans-serif;overflow:hidden;background:#000;'><div style='width:1080px;height:620px;overflow:hidden;position:relative;'><img src='{{ $json.photo }}' style='width:100%;height:100%;object-fit:cover;'/><div style='position:absolute;bottom:0;left:0;right:0;height:120px;background:linear-gradient(transparent,#cc0000);'></div></div><div style='width:1080px;height:460px;background:linear-gradient(to bottom,#cc0000,#8b0000);display:flex;align-items:center;justify-content:center;padding:30px 50px;box-sizing:border-box;'><div style='color:white;font-size:52px;font-weight:900;text-align:center;direction:rtl;line-height:1.4;'>{{ $json.title }}</div></div><div style='position:absolute;top:25px;right:25px;width:110px;height:110px;background:#cc0000;border-radius:50%;border:3px solid white;display:flex;align-items:center;justify-content:center;overflow:hidden;padding:12px;box-sizing:border-box;'><img src='https://www.goud.ma/wp-content/themes/goudv2/assets/img/logo-w.png' style='width:100%;'/></div></div>\",\n  \"selector\": \"div\"\n}",
+          "sendBody": true,
+          "specifyBody": "json",
+          "authentication": "[REDACTED]",
+          "genericAuthType": "[REDACTED]"
+        },
+        "typeVersion": 4.4
+      },
+      {
+        "id": "gen-code-web",
+        "name": "Generate Layout Code",
+        "type": "n8n-nodes-base.code",
+        "position": [
+          960,
+          0
+        ],
+        "parameters": {
+          "jsCode": "const timestamp = Date.now().toString(36).toUpperCase();\nconst code = 'L' + timestamp;\nreturn {\n  layoutCode: code,\n  title: $('Scrape Title & Photo').item.json.title,\n  photo: $('Scrape Title & Photo').item.json.photo,\n  brandedImage: $input.item.json.url,\n  articleUrl: $('Scrape Title & Photo').item.json.url\n};"
+        },
+        "typeVersion": 2
+      },
+      {
+        "id": "save-sheets-web",
+        "name": "Save Layout to Sheets",
+        "type": "n8n-nodes-base.googleSheets",
+        "position": [
+          1200,
+          0
+        ],
+        "parameters": {
+          "columns": {
+            "value": {
+              "Code": "={{ $json.layoutCode }}",
+              "Titre": "={{ $json.title }}",
+              "Statut": "En attente",
+              "Lien Article": "={{ $json.articleUrl }}",
+              "Lien Image Brand\u00e9e": "={{ $json.brandedImage }}"
+            },
+            "schema": [
+              {
+                "id": "Code",
+                "type": "string",
+                "display": true,
+                "options": [],
+                "required": false,
+                "displayName": "Code",
+                "defaultMatch": false,
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "Titre",
+                "type": "string",
+                "display": true,
+                "options": [],
+                "required": false,
+                "displayName": "Titre",
+                "defaultMatch": false,
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "Lien Article",
+                "type": "string",
+                "display": true,
+                "options": [],
+                "required": false,
+                "displayName": "Lien Article",
+                "defaultMatch": false,
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "Lien Image Brand\u00e9e",
+                "type": "string",
+                "display": true,
+                "options": [],
+                "required": false,
+                "displayName": "Lien Image Brand\u00e9e",
+                "defaultMatch": false,
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "Statut",
+                "type": "string",
+                "display": true,
+                "options": [],
+                "required": false,
+                "displayName": "Statut",
+                "defaultMatch": false,
+                "canBeUsedToMatch": true
+              }
+            ],
+            "mappingMode": "defineBelow",
+            "matchingColumns": [],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          },
+          "options": {},
+          "operation": "append",
+          "sheetName": {
+            "__rl": true,
+            "mode": "list",
+            "value": "gid=0",
+            "cachedResultName": "Feuille 1"
+          },
+          "documentId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "[REDACTED_TOKEN]",
+            "cachedResultName": "GOud layout 2"
+          }
+        },
+        "typeVersion": 4.7
+      },
+      {
+        "id": "respond-scrape",
+        "name": "Respond Scrape",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "position": [
+          1440,
+          0
+        ],
+        "parameters": {
+          "options": {
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "[REDACTED]",
+                  "value": "*"
+                }
+              ]
+            }
+          },
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ title: $('Generate Layout Code').item.json.title, photo: $('Generate Layout Code').item.json.photo, brandedImage: $('Generate Layout Code').item.json.brandedImage, layoutCode: $('Generate Layout Code').item.json.layoutCode, articleUrl: $('Generate Layout Code').item.json.articleUrl }) }}"
+        },
+        "typeVersion": 1.1
+      },
+      {
+        "id": "get-sheets-post",
+        "name": "Get Layout from Sheets",
+        "type": "n8n-nodes-base.googleSheets",
+        "position": [
+          240,
+          400
+        ],
+        "parameters": {
+          "options": {
+            "returnFirstMatch": true
+          },
+          "filtersUI": {
+            "values": [
+              {
+                "lookupValue": "={{ $json.body.layoutCode }}",
+                "lookupColumn": "Code"
+              }
+            ]
+          },
+          "sheetName": {
+            "__rl": true,
+            "mode": "list",
+            "value": "gid=0",
+            "cachedResultName": "Feuille 1"
+          },
+          "documentId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "[REDACTED_TOKEN]",
+            "cachedResultName": "GOud layout 2"
+          }
+        },
+        "typeVersion": 4.7
+      },
+      {
+        "id": "fetch-article-post",
+        "name": "Fetch Article CB",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [
+          480,
+          400
+        ],
+        "parameters": {
+          "url": "={{ $json['Lien Article'] }}",
+          "options": {
+            "response": {
+              "response": {
+                "responseFormat": "text"
+              }
+            }
+          }
+        },
+        "typeVersion": 4.4
+      },
+      {
+        "id": "clean-html-post",
+        "name": "Clean HTML",
+        "type": "n8n-nodes-base.code",
+        "position": [
+          720,
+          400
+        ],
+        "parameters": {
+          "jsCode": "const html = $input.item.json.data || '';\n\nfunction extractByClass(html, className) {\n  const regex = new RegExp(`class=\"[^\"]*${className}[^\"]*\"[^>]*>([\\\\s\\\\S]*?)<\\/[^>]+>`, 'i');\n  const match = html.match(regex);\n  if (!match) return '';\n  return match[1].replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ').trim();\n}\n\nfunction extractPostContent(html) {\n  const startMarker = '<div class=\"post-content\">';\n  const start = html.indexOf(startMarker);\n  if (start === -1) return '';\n  const block = html.slice(start + startMarker.length);\n  const cleaned = block\n    .replace(/<script[\\s\\S]*?<\\/script>/gi, '')\n    .replace(/<style[\\s\\S]*?<\\/style>/gi, '')\n    .replace(/googletag[\\s\\S]*?;/g, '');\n  const paragraphs = [];\n  const pRegex = /<p[^>]*>([\\s\\S]*?)<\\/p>/gi;\n  let match;\n  while ((match = pRegex.exec(cleaned)) !== null) {\n    const text = match[1].replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ').replace(/[ \\t]+/g, ' ').trim();\n    if (text && text.length > 40 && !text.includes('\u062c\u0645\u064a\u0639 \u0627\u0644\u062d\u0642\u0648\u0642 \u0645\u062d\u0641\u0648\u0638\u0629') && !text.includes('goud.ma') && !text.includes('googletag') && !text.includes('var ') && !text.includes('function ')) {\n      paragraphs.push(text);\n    }\n    if (paragraphs.length >= 8) break;\n  }\n  return paragraphs.join('\\n\\n');\n}\n\nreturn {\n  ...($input.item.json),\n  cleanTitle: extractByClass(html, 'entry-title'),\n  cleanContent: extractPostContent(html)\n};"
+        },
+        "typeVersion": 2
+      },
+      {
+        "id": "ai-post-web",
+        "name": "Generate Post RS",
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "position": [
+          960,
+          400
+        ],
+        "parameters": {
+          "text": "=\u0623\u0646\u062a \u0645\u062d\u0631\u0631 \u0635\u062d\u0641\u064a \u062e\u0628\u064a\u0631 \u0641\u064a \u0645\u0648\u0642\u0639 \u06af\u0648\u062f (goud.ma)\u060c \u0645\u062a\u062e\u0635\u0635 \u0641\u064a \u0643\u062a\u0627\u0628\u0629 \u0645\u0646\u0634\u0648\u0631\u0627\u062a \u0627\u0644\u0633\u0648\u0634\u064a\u0627\u0644 \u0645\u064a\u062f\u064a\u0627 \u0628\u0627\u0644\u062f\u0627\u0631\u062c\u0629 \u0627\u0644\u0645\u063a\u0631\u0628\u064a\u0629.\n\n\u0645\u0647\u0645\u062a\u0643: \u0627\u0643\u062a\u0628 \u0645\u0646\u0634\u0648\u0631 \u062a\u0634\u0648\u064a\u0642\u064a (teaser) \u064a\u062e\u0644\u064a \u0627\u0644\u0646\u0627\u0633 \u064a\u0643\u0644\u064a\u0643\u0648 \u0639\u0644\u0649 \u0627\u0644\u0644\u064a\u0646\u0643.\n\n=== \u0627\u0644\u0642\u0648\u0627\u0639\u062f ===\n1. \u0627\u0644\u062f\u0627\u0631\u062c\u0629 \u0627\u0644\u0645\u063a\u0631\u0628\u064a\u0629 \u0628\u0627\u0644\u062d\u0631\u0641 \u0627\u0644\u0639\u0631\u0628\u064a\n2. \u062c\u0645\u0644\u0629 \u0623\u0648\u0644\u0649 \u0635\u0627\u062f\u0645\u0629 \u0623\u0648 \u0645\u062b\u064a\u0631\u0629 \u0644\u0644\u0641\u0636\u0648\u0644\n3. \u0623\u0639\u0637\u064a \u0641\u0643\u0631\u0629 \u0639\u0627\u0645\u0629 \u0639\u0644\u0649 \u0627\u0644\u062e\u0628\u0631 \u2014 \u0628\u0644\u0627 \u062a\u0641\u0627\u0635\u064a\u0644\n4. \u062e\u0644\u064a \u0634\u064a \u0645\u0639\u0644\u0648\u0645\u0629 \u0646\u0627\u0642\u0635\u0629 \u0628\u0627\u0634 \u0627\u0644\u0648\u0627\u062d\u062f \u064a\u0643\u0644\u064a\u0643\n5. 2 \u0625\u0644\u0649 3 \u062c\u0645\u0644 \u0641\u0642\u0637\n6. \u0627\u062e\u062a\u0645 \u0628 \"\u0627\u0644\u062a\u0641\u0627\u0635\u064a\u0644 \u0639\u0646\u062f \u06af\u0648\u062f \ud83d\udc47\"\n7. \u0628\u062f\u0648\u0646 \u0647\u0627\u0634\u062a\u0627\u0642\u0627\u062a \u0641\u064a \u0627\u0644\u0646\u0635\u060c \u0628\u062f\u0648\u0646 \u0625\u064a\u0645\u0648\u062c\u064a\n\n=== \u0627\u0644\u0645\u0642\u0627\u0644 ===\n\u0627\u0644\u0639\u0646\u0648\u0627\u0646: {{ $json.cleanTitle }}\n\u0627\u0644\u0645\u062d\u062a\u0648\u0649: {{ $json.cleanContent }}\n\n=== \u0627\u0644\u0645\u0637\u0644\u0648\u0628 ===\n\u0627\u0643\u062a\u0628 \u0641\u0642\u0637 JSON \u0647\u0643\u0630\u0627 \u0628\u062f\u0648\u0646 \u0623\u064a \u0634\u0631\u062d:\n{\n  \"post\": \"\u0646\u0635 \u0627\u0644\u0628\u0648\u0633\u062a \u0647\u0646\u0627\",\n  \"hashtags\": \"#\u0647\u0627\u0634\u062a\u0627\u06421 #\u0647\u0627\u0634\u062a\u0627\u06422 #\u0647\u0627\u0634\u062a\u0627\u06423 #\u0647\u0627\u0634\u062a\u0627\u06424 #\u0647\u0627\u0634\u062a\u0627\u06425\"\n}",
+          "agent": "toolsAgent",
+          "options": {},
+          "promptType": "define"
+        },
+        "typeVersion": 1.7
+      },
+      {
+        "id": "anthropic-web",
+        "name": "Anthropic",
+        "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+        "position": [
+          960,
+          624
+        ],
+        "parameters": {
+          "model": {
+            "__rl": true,
+            "mode": "list",
+            "value": "[REDACTED]",
+            "cachedResultName": "Claude Sonnet 4.5"
+          },
+          "options": {}
+        },
+        "typeVersion": 1.3
+      },
+      {
+        "id": "parse-post-web",
+        "name": "Parse Post JSON",
+        "type": "n8n-nodes-base.code",
+        "position": [
+          1200,
+          400
+        ],
+        "parameters": {
+          "jsCode": "const raw = $input.item.json.output;\nconst cleaned = raw.replace(/```json\\n?/g, '').replace(/```/g, '').trim();\nconst parsed = JSON.parse(cleaned);\nreturn { post: parsed.post, hashtags: parsed.hashtags };"
+        },
+        "typeVersion": 2
+      },
+      {
+        "id": "respond-post",
+        "name": "Respond Post",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "position": [
+          1440,
+          400
+        ],
+        "parameters": {
+          "options": {
+            "responseHeaders": {
+              "entries": [
+                {
+                  "name": "[REDACTED]",
+                  "value": "*"
+                }
+              ]
+            }
+          },
+          "respondWith": "json",
+          "responseBody": "={{ JSON.stringify({ post: $json.post, hashtags: $json.hashtags }) }}"
+        },
+        "typeVersion": 1.1
+      }
+    ],
+    "connections": {
+      "Anthropic": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Generate Post RS",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Clean HTML": {
+        "main": [
+          [
+            {
+              "node": "Generate Post RS",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Webhook Post": {
+        "main": [
+          [
+            {
+              "node": "Get Layout from Sheets",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Webhook Scrape": {
+        "main": [
+          [
+            {
+              "node": "Fetch Article Page",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Post JSON": {
+        "main": [
+          [
+            {
+              "node": "Respond Post",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Article CB": {
+        "main": [
+          [
+            {
+              "node": "Clean HTML",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Generate Post RS": {
+        "main": [
+          [
+            {
+              "node": "Parse Post JSON",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Article Page": {
+        "main": [
+          [
+            {
+              "node": "Scrape Title & Photo",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create Branded Image": {
+        "main": [
+          [
+            {
+              "node": "Generate Layout Code",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Generate Layout Code": {
+        "main": [
+          [
+            {
+              "node": "Save Layout to Sheets",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Scrape Title & Photo": {
+        "main": [
+          [
+            {
+              "node": "Create Branded Image",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Save Layout to Sheets": {
+        "main": [
+          [
+            {
+              "node": "Respond Scrape",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Layout from Sheets": {
+        "main": [
+          [
+            {
+              "node": "Fetch Article CB",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    }
+  }
+}

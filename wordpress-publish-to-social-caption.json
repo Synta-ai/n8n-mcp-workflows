@@ -1,0 +1,419 @@
+{
+  "name": "Wordpress Publish To Social Caption",
+  "description": "Triggered on WordPress publish, fetches full article, generates social caption via OpenAI, saves to Sheets, notifies WhatsApp.",
+  "node_count": 9,
+  "workflow": {
+    "nodes": [
+      {
+        "id": "webhook-wp-publish",
+        "name": "Webhook WordPress Publish",
+        "type": "n8n-nodes-base.webhook",
+        "position": [
+          240,
+          300
+        ],
+        "webhookId": "wp-publish-event",
+        "parameters": {
+          "path": "wp-social-publisher",
+          "options": {},
+          "httpMethod": "POST",
+          "responseMode": "responseNode"
+        },
+        "typeVersion": 2
+      },
+      {
+        "id": "http-fetch-wp-article",
+        "name": "Fetch Full Article",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [
+          460,
+          300
+        ],
+        "parameters": {
+          "url": "={{ $json.wordpress_site_url }}/wp-json/wp/v2/posts/{{ $json.post_id }}",
+          "method": "GET",
+          "options": {},
+          "sendBody": false,
+          "sendQuery": false,
+          "sendHeaders": false,
+          "authentication": "[REDACTED]",
+          "nodeCredentialType": "[REDACTED]"
+        },
+        "typeVersion": 4.2
+      },
+      {
+        "id": "ai-agent-caption",
+        "name": "Generate Social Caption",
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "position": [
+          680,
+          300
+        ],
+        "parameters": {
+          "text": "=You are a social media expert. Based on this article:\n\nTitle: {{ $json.title.rendered }}\nExcerpt: {{ $json.excerpt.rendered }}\n\nGenerate a short engaging social media caption (max 150 characters) and 5 relevant hashtags.\n\nYou MUST respond in valid JSON format:\n{\n  \"caption\": \"your engaging caption here\",\n  \"hashtags\": \"#hashtag1 #hashtag2 #hashtag3 #hashtag4 #hashtag5\"\n}",
+          "agent": "toolsAgent",
+          "options": {},
+          "promptType": "define",
+          "hasOutputParser": true
+        },
+        "typeVersion": 1.7
+      },
+      {
+        "id": "openai-model-caption",
+        "name": "OpenAI GPT-4o",
+        "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+        "position": [
+          680,
+          480
+        ],
+        "parameters": {
+          "model": {
+            "__rl": true,
+            "mode": "list",
+            "value": "gpt-4o"
+          },
+          "options": {
+            "temperature": 0.7
+          }
+        },
+        "typeVersion": 1
+      },
+      {
+        "id": "output-parser-json",
+        "name": "Structured Output Parser",
+        "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+        "position": [
+          680,
+          620
+        ],
+        "parameters": {
+          "jsonSchema": "{\n  \"type\": \"object\",\n  \"properties\": {\n    \"caption\": {\n      \"type\": \"string\"\n    },\n    \"hashtags\": {\n      \"type\": \"string\"\n    }\n  },\n  \"required\": [\"caption\", \"hashtags\"]\n}"
+        },
+        "typeVersion": 1.2
+      },
+      {
+        "id": "http-bannerbear",
+        "name": "Create Branded Image",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [
+          900,
+          300
+        ],
+        "parameters": {
+          "url": "https://[domain]/v2/images",
+          "method": "POST",
+          "options": {},
+          "sendBody": true,
+          "sendHeaders": true,
+          "authentication": "[REDACTED]",
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "template",
+                "value": "={{ $json.[REDACTED] }}"
+              },
+              {
+                "name": "modifications",
+                "value": "=[{\"name\": \"background_image\", \"image_url\": \"{{ $node['Fetch Full Article'].json.featured_media_url }}\"}, {\"name\": \"title_text\", \"text\": \"{{ $node['Fetch Full Article'].json.title.rendered }}\"}]"
+              }
+            ]
+          },
+          "genericAuthType": "[REDACTED]",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        },
+        "typeVersion": 4.2
+      },
+      {
+        "id": "sheets-save-state",
+        "name": "Save to Google Sheets",
+        "type": "n8n-nodes-base.googleSheets",
+        "position": [
+          1120,
+          300
+        ],
+        "parameters": {
+          "columns": {
+            "value": {
+              "status": "[REDACTED]",
+              "caption": "={{ $node['Generate Social Caption'].json.output }}",
+              "hashtags": "={{ $node['Generate Social Caption'].json.output }}",
+              "image_url": "={{ $node['Fetch Full Article'].json.featured_media_url }}",
+              "timestamp": "={{ $now.toISO() }}",
+              "article_id": "={{ $node['Fetch Full Article'].json.id }}",
+              "article_url": "={{ $node['Fetch Full Article'].json.link }}",
+              "article_title": "={{ $node['Fetch Full Article'].json.title.rendered }}",
+              "admin_whatsapp": "={{ $node['Webhook WordPress Publish'].json.admin_whatsapp }}",
+              "branded_image_url": "={{ $node['Create Branded Image'].json.image_url }}"
+            },
+            "schema": [
+              {
+                "id": "article_id",
+                "type": "string",
+                "display": true,
+                "options": [],
+                "required": false,
+                "displayName": "article_id",
+                "defaultMatch": false,
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "article_title",
+                "type": "string",
+                "display": true,
+                "options": [],
+                "required": false,
+                "displayName": "article_title",
+                "defaultMatch": false,
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "article_url",
+                "type": "string",
+                "display": true,
+                "options": [],
+                "required": false,
+                "displayName": "article_url",
+                "defaultMatch": false,
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "caption",
+                "type": "string",
+                "display": true,
+                "options": [],
+                "required": false,
+                "displayName": "caption",
+                "defaultMatch": false,
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "hashtags",
+                "type": "string",
+                "display": true,
+                "options": [],
+                "required": false,
+                "displayName": "hashtags",
+                "defaultMatch": false,
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "image_url",
+                "type": "string",
+                "display": true,
+                "options": [],
+                "required": false,
+                "displayName": "image_url",
+                "defaultMatch": false,
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "branded_image_url",
+                "type": "string",
+                "display": true,
+                "options": [],
+                "required": false,
+                "displayName": "branded_image_url",
+                "defaultMatch": false,
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "status",
+                "type": "string",
+                "display": true,
+                "options": [],
+                "required": false,
+                "displayName": "status",
+                "defaultMatch": false,
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "timestamp",
+                "type": "string",
+                "display": true,
+                "options": [],
+                "required": false,
+                "displayName": "timestamp",
+                "defaultMatch": false,
+                "canBeUsedToMatch": true
+              },
+              {
+                "id": "admin_whatsapp",
+                "type": "string",
+                "display": true,
+                "options": [],
+                "required": false,
+                "displayName": "admin_whatsapp",
+                "defaultMatch": false,
+                "canBeUsedToMatch": true
+              }
+            ],
+            "mappingMode": "defineBelow",
+            "matchingColumns": [],
+            "attemptToConvertTypes": false,
+            "convertFieldsToString": false
+          },
+          "options": {},
+          "operation": "appendOrUpdate",
+          "sheetName": {
+            "__rl": true,
+            "mode": "list",
+            "value": "gid=0",
+            "cachedResultName": ""
+          },
+          "documentId": {
+            "__rl": true,
+            "mode": "list",
+            "value": "",
+            "cachedResultName": ""
+          }
+        },
+        "typeVersion": 4.5
+      },
+      {
+        "id": "http-whatsapp-admin",
+        "name": "Send WhatsApp to Admin",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [
+          1340,
+          300
+        ],
+        "parameters": {
+          "url": "=https://graph.facebook.com/v18.0/{{ $json.[REDACTED] }}/messages",
+          "body": "={\n  \"messaging_product\": \"whatsapp\",\n  \"recipient_type\": \"individual\",\n  \"to\": \"{{ $node['Webhook WordPress Publish'].json.admin_whatsapp }}\",\n  \"type\": \"interactive\",\n  \"interactive\": {\n    \"type\": \"button\",\n    \"header\": {\n      \"type\": \"image\",\n      \"image\": {\n        \"link\": \"{{ $node['Create Branded Image'].json.image_url }}\"\n      }\n    },\n    \"body\": {\n      \"text\": \"\ud83d\udcf0 Nouvel article publi\u00e9 !\\n\\n\ud83d\udd17 {{ $node['Fetch Full Article'].json.link }}\\n\\n\ud83d\udcdd Texte propos\u00e9 :\\n{{ $node['Generate Social Caption'].json.output.caption }}\\n{{ $node['Generate Social Caption'].json.output.hashtags }}\\n\\nQue veux-tu faire ?\"\n    },\n    \"action\": {\n      \"buttons\": [\n        {\n          \"type\": \"reply\",\n          \"reply\": {\n            \"id\": \"validate\",\n            \"title\": \"\u2705 Valider\"\n          }\n        },\n        {\n          \"type\": \"reply\",\n          \"reply\": {\n            \"id\": \"modify_text\",\n            \"title\": \"\u270f\ufe0f Modifier texte\"\n          }\n        },\n        {\n          \"type\": \"reply\",\n          \"reply\": {\n            \"id\": \"modify_image\",\n            \"title\": \"\ud83d\uddbc\ufe0f Modifier image\"\n          }\n        }\n      ]\n    }\n  }\n}",
+          "method": "POST",
+          "options": {},
+          "sendBody": true,
+          "contentType": "json",
+          "sendHeaders": true,
+          "authentication": "[REDACTED]",
+          "genericAuthType": "[REDACTED]",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "Authorization",
+                "value": "=Bearer [REDACTED] $json.whatsapp_access_token }}"
+              }
+            ]
+          }
+        },
+        "typeVersion": 4.2
+      },
+      {
+        "id": "respond-webhook",
+        "name": "Respond to Webhook",
+        "type": "n8n-nodes-base.respondToWebhook",
+        "position": [
+          1560,
+          300
+        ],
+        "parameters": {
+          "options": {},
+          "respondWith": "json",
+          "responseBody": "={ \"success\": true, \"message\": \"Article processing initiated\" }"
+        },
+        "typeVersion": 1.1
+      }
+    ],
+    "connections": {
+      "OpenAI GPT-4o": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "Generate Social Caption",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Full Article": {
+        "main": [
+          [
+            {
+              "node": "Generate Social Caption",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create Branded Image": {
+        "main": [
+          [
+            {
+              "node": "Save to Google Sheets",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Save to Google Sheets": {
+        "main": [
+          [
+            {
+              "node": "Send WhatsApp to Admin",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send WhatsApp to Admin": {
+        "main": [
+          [
+            {
+              "node": "Respond to Webhook",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Generate Social Caption": {
+        "main": [
+          [
+            {
+              "node": "Create Branded Image",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Structured Output Parser": {
+        "ai_outputParser": [
+          [
+            {
+              "node": "Generate Social Caption",
+              "type": "ai_outputParser",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Webhook WordPress Publish": {
+        "main": [
+          [
+            {
+              "node": "Fetch Full Article",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    }
+  }
+}
