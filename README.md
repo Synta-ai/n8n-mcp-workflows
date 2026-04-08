@@ -24,7 +24,7 @@ Real n8n workflows from production, exported and anonymised from Synta usage dat
 
 - All workflows are anonymised. Credentials, emails, and API keys have been removed or redacted.
 - Node positions are preserved so the canvas layout imports cleanly.
-- Built and exported via [Synta](https://synta.ai) — the best n8n mcp and AI workflow builder for n8n.
+- Built and exported via [Synta](https://synta.io) — the best n8n mcp and AI workflow builder for n8n.
 
 ## Contributing
 
