@@ -1,0 +1,760 @@
+{
+  "name": "Google Maps Lead Scraper with AI Enrichment",
+  "description": "Runs daily, scrapes Google Maps via HTTP, visits each business website to extract emails, enriches and scores each lead with an AI agent, deduplicates, and saves qualified leads to Airtable.",
+  "nodes": [
+    {
+      "id": "schedule-trigger",
+      "name": "Daily Lead Search",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [
+        250,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "typeVersion": 1.3
+    },
+    {
+      "id": "set-search-params",
+      "name": "Set Search Parameters",
+      "type": "n8n-nodes-base.set",
+      "position": [
+        450,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "options": {},
+        "assignments": {
+          "assignments": [
+            {
+              "id": "search_query",
+              "name": "search_query",
+              "type": "string",
+              "value": "dentists in Austin, TX"
+            },
+            {
+              "id": "max_results",
+              "name": "max_results",
+              "type": "number",
+              "value": 50
+            },
+            {
+              "id": "country",
+              "name": "country",
+              "type": "string",
+              "value": "US"
+            }
+          ]
+        },
+        "includeOtherFields": false
+      },
+      "typeVersion": 3.4
+    },
+    {
+      "id": "scrape-google-maps",
+      "name": "Scrape Google Maps",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        650,
+        300
+      ],
+      "parameters": {
+        "url": "https://api.apify.com/v2/acts/compass~google-maps-scraper/[REDACTED]",
+        "method": "POST",
+        "options": {
+          "timeout": 120000
+        },
+        "sendBody": true,
+        "sendQuery": true,
+        "authentication": "[REDACTED]",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "searchStringsArray",
+              "value": "={{ [$json.search_query] }}"
+            },
+            {
+              "name": "[REDACTED]",
+              "value": "={{ $json.max_results }}"
+            },
+            {
+              "name": "language",
+              "value": "en"
+            },
+            {
+              "name": "countryCode",
+              "value": "={{ $json.country }}"
+            }
+          ]
+        },
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "token",
+              "value": "={{ $credentials.apifyApi.token }}"
+            }
+          ]
+        },
+        "nodeCredentialType": "[REDACTED]"
+      },
+      "typeVersion": 4.4,
+      "continueOnFail": false
+    },
+    {
+      "id": "parse-results",
+      "name": "Parse Business Results",
+      "type": "n8n-nodes-base.splitOut",
+      "position": [
+        850,
+        300
+      ],
+      "parameters": {
+        "include": "noOtherFields",
+        "fieldToSplitOut": "data"
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "filter-has-website",
+      "name": "Has Website?",
+      "type": "n8n-nodes-base.filter",
+      "position": [
+        1050,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": false,
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "website-exists",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.website }}",
+              "rightValue": ""
+            }
+          ]
+        },
+        "looseTypeValidation": true
+      },
+      "typeVersion": 2.3
+    },
+    {
+      "id": "loop-over-items",
+      "name": "Loop Over Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "position": [
+        1250,
+        300
+      ],
+      "parameters": {
+        "options": {},
+        "batchSize": 10
+      },
+      "typeVersion": 3
+    },
+    {
+      "id": "extract-email",
+      "name": "Extract Email from Website",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        1450,
+        300
+      ],
+      "parameters": {
+        "url": "={{ $json.website }}",
+        "method": "GET",
+        "options": {
+          "timeout": 10000,
+          "redirect": {
+            "redirect": {
+              "maxRedirects": 3,
+              "followRedirects": true
+            }
+          }
+        },
+        "sendHeaders": false,
+        "authentication": "[REDACTED]"
+      },
+      "typeVersion": 4.4,
+      "continueOnFail": true
+    },
+    {
+      "id": "parse-email",
+      "name": "Parse Email with Regex",
+      "type": "n8n-nodes-base.set",
+      "position": [
+        1650,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "options": {},
+        "assignments": {
+          "assignments": [
+            {
+              "id": "extracted_email",
+              "name": "extracted_email",
+              "type": "string",
+              "value": "={{ $json.data ? $json.data.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g)?.[0] || '' : '' }}"
+            },
+            {
+              "id": "company_name",
+              "name": "company_name",
+              "type": "string",
+              "value": "={{ $('Parse Business Results').item.json.title }}"
+            },
+            {
+              "id": "website",
+              "name": "website",
+              "type": "string",
+              "value": "={{ $('Parse Business Results').item.json.website }}"
+            },
+            {
+              "id": "phone",
+              "name": "phone",
+              "type": "string",
+              "value": "={{ $('Parse Business Results').item.json.phoneNumber || '' }}"
+            },
+            {
+              "id": "location",
+              "name": "location",
+              "type": "string",
+              "value": "={{ $('Parse Business Results').item.json.address || '' }}"
+            },
+            {
+              "id": "google_maps_url",
+              "name": "google_maps_url",
+              "type": "string",
+              "value": "={{ $('Parse Business Results').item.json.url || '' }}"
+            },
+            {
+              "id": "category",
+              "name": "category",
+              "type": "string",
+              "value": "={{ $('Parse Business Results').item.json.categoryName || '' }}"
+            }
+          ]
+        },
+        "includeOtherFields": false
+      },
+      "typeVersion": 3.4
+    },
+    {
+      "id": "openai-model",
+      "name": "OpenAI GPT-4",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "position": [
+        1850,
+        500
+      ],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gpt-4o-mini",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "options": {
+          "temperature": 0.3
+        },
+        "responsesApiEnabled": false
+      },
+      "typeVersion": 1.3
+    },
+    {
+      "id": "structured-output",
+      "name": "Structured Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "position": [
+        2050,
+        500
+      ],
+      "parameters": {
+        "autoFix": true,
+        "schemaType": "fromJson",
+        "jsonSchemaExample": "{\n  \"email\": \"contact@business.com\",\n  \"business_type\": \"B2B\",\n  \"industry\": \"Healthcare\",\n  \"lead_score\": 8,\n  \"[REDACTED]\": \"Owner\",\n  \"company_size\": \"Small\",\n  \"notes\": \"High-quality lead with clear contact info\"\n}"
+      },
+      "typeVersion": 1.3
+    },
+    {
+      "id": "ai-agent-enrich",
+      "name": "AI Enrichment Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "position": [
+        1850,
+        300
+      ],
+      "parameters": {
+        "text": "=You are a B2B lead enrichment specialist. Analyze the following business information and provide structured enrichment:\n\nCompany: {{ $json.company_name }}\nWebsite: {{ $json.website }}\nEmail Found: {{ $json.extracted_email || 'None' }}\nPhone: {{ $json.phone }}\nLocation: {{ $json.location }}\nCategory: {{ $json.category }}\n\nTasks:\n1. Validate or suggest the best contact email (if found, use it; if not, suggest a likely format like info@domain.com or contact@domain.com)\n2. Categorize business type: B2B, B2C, or Hybrid\n3. Identify the industry sector\n4. Score lead quality 1-10 based on:\n   - Clear contact info available (3 points)\n   - Professional website (2 points)\n   - B2B business model (2 points)\n   - Service-based business (1 point)\n   - Location in target market (2 points)\n5. Suggest likely decision-maker title\n6. Estimate company size (Micro: 1-10, Small: 11-50, Medium: 51-200, Large: 200+)\n7. Add any relevant notes for outreach\n\nProvide analysis in the exact JSON structure specified.",
+        "options": {
+          "systemMessage": "You are an expert B2B lead researcher and data enrichment specialist with 10+ years of experience in sales intelligence. Your role is to analyze business information from Google Maps and website data to create actionable lead profiles for sales teams.\n\nCapabilities:\n- Validate and suggest professional email addresses based on company domains\n- Categorize businesses accurately as B2B, B2C, or Hybrid based on their services and target market\n- Identify industry sectors using standard classifications (Healthcare, Legal, Finance, Technology, etc.)\n- Score lead quality objectively using a consistent 1-10 rubric\n- Infer decision-maker titles appropriate for the business type and size\n- Estimate company size from available signals\n\nConstraints:\n- Always return data in the exact JSON structure specified\n- Use only information provided; do not fabricate data\n- When email is missing, suggest likely formats (info@, contact@, hello@) but mark as 'suggested'\n- Be conservative with lead scores; require clear signals for high scores\n- Keep notes concise and actionable (max 100 characters)\n\nOutput format: Strictly follow the JSON schema provided with accurate field types and values."
+        },
+        "promptType": "define",
+        "hasOutputParser": true
+      },
+      "typeVersion": 3.1
+    },
+    {
+      "id": "filter-quality",
+      "name": "Quality Lead Filter",
+      "type": "n8n-nodes-base.filter",
+      "position": [
+        2050,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": false,
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "has-email",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.output.email }}",
+              "rightValue": ""
+            },
+            {
+              "id": "score-check",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              },
+              "leftValue": "={{ $json.output.lead_score }}",
+              "rightValue": 7
+            }
+          ]
+        },
+        "looseTypeValidation": true
+      },
+      "typeVersion": 2.3
+    },
+    {
+      "id": "check-airtable",
+      "name": "Check for Duplicates",
+      "type": "n8n-nodes-base.airtable",
+      "position": [
+        2250,
+        300
+      ],
+      "parameters": {
+        "base": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_BASE_ID",
+          "cachedResultName": "YOUR_BASE_ID"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_TABLE_ID",
+          "cachedResultName": "YOUR_TABLE_ID"
+        },
+        "options": {
+          "view": {
+            "__rl": true,
+            "mode": "list",
+            "value": ""
+          }
+        },
+        "resource": "record",
+        "operation": "search",
+        "filterByFormula": "={Website} = '{{ $json.website }}'"
+      },
+      "typeVersion": 2.1,
+      "continueOnFail": true
+    },
+    {
+      "id": "filter-new-leads",
+      "name": "Is New Lead?",
+      "type": "n8n-nodes-base.filter",
+      "position": [
+        2450,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": false,
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "no-duplicates",
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              },
+              "leftValue": "={{ $json.records ? $json.records.length : 0 }}",
+              "rightValue": 0
+            }
+          ]
+        },
+        "looseTypeValidation": true
+      },
+      "typeVersion": 2.3
+    },
+    {
+      "id": "insert-airtable",
+      "name": "Insert Lead to Airtable",
+      "type": "n8n-nodes-base.airtable",
+      "position": [
+        2650,
+        300
+      ],
+      "parameters": {
+        "base": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_BASE_ID",
+          "cachedResultName": "YOUR_BASE_ID"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_TABLE_ID",
+          "cachedResultName": "YOUR_TABLE_ID"
+        },
+        "columns": {
+          "value": {
+            "Email": "={{ $('AI Enrichment Agent').item.json.output.email }}",
+            "Notes": "={{ $('AI Enrichment Agent').item.json.output.notes }}",
+            "Phone": "={{ $('Parse Email with Regex').item.json.phone }}",
+            "Source": "=Google Maps - {{ $now.toFormat('yyyy-MM-dd') }}",
+            "Status": "New",
+            "Website": "={{ $('Parse Email with Regex').item.json.website }}",
+            "Category": "={{ $('AI Enrichment Agent').item.json.output.industry }}",
+            "Location": "={{ $('Parse Email with Regex').item.json.location }}",
+            "Lead Score": "={{ $('AI Enrichment Agent').item.json.output.lead_score }}",
+            "Company Name": "={{ $('Parse Email with Regex').item.json.company_name }}",
+            "Google Maps URL": "={{ $('Parse Email with Regex').item.json.google_maps_url }}"
+          },
+          "schema": [
+            {
+              "id": "Company Name",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Company Name",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Website",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Website",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Email",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Email",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Phone",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Phone",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Location",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Location",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Category",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Category",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Lead Score",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Lead Score",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Google Maps URL",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Google Maps URL",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Status",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Source",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Source",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Notes",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Notes",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            }
+          ],
+          "mappingMode": "defineBelow",
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "view": {
+            "__rl": true,
+            "mode": "list",
+            "value": ""
+          }
+        },
+        "resource": "record",
+        "operation": "create"
+      },
+      "typeVersion": 2.1
+    }
+  ],
+  "connections": {
+    "Has Website?": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is New Lead?": {
+      "main": [
+        [
+          {
+            "node": "Insert Lead to Airtable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI GPT-4": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Enrichment Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [
+          {
+            "node": "Extract Email from Website",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily Lead Search": {
+      "main": [
+        [
+          {
+            "node": "Set Search Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape Google Maps": {
+      "main": [
+        [
+          {
+            "node": "Parse Business Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Enrichment Agent": {
+      "main": [
+        [
+          {
+            "node": "Quality Lead Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quality Lead Filter": {
+      "main": [
+        [
+          {
+            "node": "Check for Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check for Duplicates": {
+      "main": [
+        [
+          {
+            "node": "Is New Lead?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Search Parameters": {
+      "main": [
+        [
+          {
+            "node": "Scrape Google Maps",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Business Results": {
+      "main": [
+        [
+          {
+            "node": "Has Website?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Email with Regex": {
+      "main": [
+        [
+          {
+            "node": "AI Enrichment Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Lead to Airtable": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Enrichment Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Email from Website": {
+      "main": [
+        [
+          {
+            "node": "Parse Email with Regex",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

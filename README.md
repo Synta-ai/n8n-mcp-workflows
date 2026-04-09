@@ -1,4 +1,4 @@
-# n8n Production Workflow Examples
+# n8n MCP Production Workflow Examples
 
 Real n8n workflows from production, exported and anonymised from synta mcp usage data. Each one is deployed by real users and built around a specific use case.
 
@@ -15,6 +15,7 @@ Real n8n workflows from production, exported and anonymised from synta mcp usage
 |---|---|
 | `multi-source-lead-scorer.json` | Collect leads from form, email and social DMs, score with AI, route hot leads to Slack |
 | `call-transcript-reviewer-ghl.json` | Pull call transcripts from Dialpad via GHL webhook, review with Claude, save scored results to Sheets |
+| `google-maps-lead-scraper.json` | Scrape Google Maps daily, extract emails from business websites, AI-enrich and score each lead, save to Airtable |
 
 ### document-processing/
 | File | Use Case |
