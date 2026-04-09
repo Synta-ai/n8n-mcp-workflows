@@ -1,0 +1,802 @@
+{
+  "name": "Multi Source Lead Scorer",
+  "description": "Collects leads from form webhook, IMAP email, and social DMs, normalises and deduplicates, scores with Claude, routes hot leads to Slack.",
+  "nodes": [
+    {
+      "id": "webhook-trigger",
+      "name": "Form Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "onError": "continueRegularOutput",
+      "position": [
+        100,
+        200
+      ],
+      "webhookId": "0ee38987-8923-4132-9ba8-26628d2fc77e",
+      "parameters": {
+        "path": "lead-form",
+        "options": {},
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "multipleMethods": false
+      },
+      "typeVersion": 2.1
+    },
+    {
+      "id": "email-trigger",
+      "name": "Email IMAP",
+      "type": "n8n-nodes-base.emailReadImap",
+      "disabled": true,
+      "position": [
+        100,
+        400
+      ],
+      "parameters": {
+        "format": "simple",
+        "mailbox": "INBOX",
+        "postProcessAction": "read",
+        "downloadAttachments": false
+      },
+      "typeVersion": 2.1
+    },
+    {
+      "id": "schedule-trigger",
+      "name": "Schedule Social Polling",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [
+        100,
+        600
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "typeVersion": 1.3
+    },
+    {
+      "id": "http-social",
+      "name": "Poll Social DMs",
+      "type": "n8n-nodes-base.httpRequest",
+      "onError": "continueRegularOutput",
+      "maxTries": 3,
+      "position": [
+        300,
+        600
+      ],
+      "parameters": {
+        "url": "https://[domain]/social/messages",
+        "method": "GET",
+        "authentication": "[REDACTED]",
+        "nodeCredentialType": "[REDACTED]"
+      },
+      "retryOnFail": true,
+      "typeVersion": 4.4,
+      "waitBetweenTries": 1000
+    },
+    {
+      "id": "set-form",
+      "name": "Normalize Form Data",
+      "type": "n8n-nodes-base.set",
+      "position": [
+        400,
+        200
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "name_field",
+              "name": "lead_name",
+              "type": "string",
+              "value": "={{ $json.name || $json.full_name || $json.contact_name }}"
+            },
+            {
+              "id": "email_field",
+              "name": "lead_email",
+              "type": "string",
+              "value": "={{ $json.email || $json.email_address }}"
+            },
+            {
+              "id": "source_field",
+              "name": "lead_source",
+              "type": "string",
+              "value": "Form Submission"
+            },
+            {
+              "id": "message_field",
+              "name": "lead_message",
+              "type": "string",
+              "value": "={{ $json.message || $json.inquiry || $json.comments }}"
+            },
+            {
+              "id": "company_field",
+              "name": "lead_company",
+              "type": "string",
+              "value": "={{ $json.company || $json.organization || $json.business_name }}"
+            },
+            {
+              "id": "budget_field",
+              "name": "lead_budget",
+              "type": "string",
+              "value": "={{ $json.budget || $json.budget_range || \"Not specified\" }}"
+            },
+            {
+              "id": "timestamp_field",
+              "name": "lead_timestamp",
+              "type": "string",
+              "value": "={{ new Date().toISOString() }}"
+            }
+          ]
+        },
+        "includeOtherFields": false
+      },
+      "typeVersion": 3.4
+    },
+    {
+      "id": "set-email",
+      "name": "Normalize Email Data",
+      "type": "n8n-nodes-base.set",
+      "position": [
+        400,
+        400
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "name_field",
+              "name": "lead_name",
+              "type": "string",
+              "value": "={{ $json.from.name || $json.from.address.split(\"@\")[0] }}"
+            },
+            {
+              "id": "email_field",
+              "name": "lead_email",
+              "type": "string",
+              "value": "={{ $json.from.address }}"
+            },
+            {
+              "id": "source_field",
+              "name": "lead_source",
+              "type": "string",
+              "value": "Email Inquiry"
+            },
+            {
+              "id": "message_field",
+              "name": "lead_message",
+              "type": "string",
+              "value": "={{ $json.textPlain || $json.textHtml }}"
+            },
+            {
+              "id": "company_field",
+              "name": "lead_company",
+              "type": "string",
+              "value": "={{ $json.from.address.split(\"@\")[1] }}"
+            },
+            {
+              "id": "budget_field",
+              "name": "lead_budget",
+              "type": "string",
+              "value": "Not specified"
+            },
+            {
+              "id": "timestamp_field",
+              "name": "lead_timestamp",
+              "type": "string",
+              "value": "={{ $json.receivedAt || new Date().toISOString() }}"
+            }
+          ]
+        },
+        "includeOtherFields": false
+      },
+      "typeVersion": 3.4
+    },
+    {
+      "id": "set-social",
+      "name": "Normalize Social Data",
+      "type": "n8n-nodes-base.set",
+      "position": [
+        500,
+        600
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "name_field",
+              "name": "lead_name",
+              "type": "string",
+              "value": "={{ $json.sender_name || $json.username || $json.from }}"
+            },
+            {
+              "id": "email_field",
+              "name": "lead_email",
+              "type": "string",
+              "value": "={{ $json.email || \"social@\" + ($json.platform || \"unknown\") + \".com\" }}"
+            },
+            {
+              "id": "source_field",
+              "name": "lead_source",
+              "type": "string",
+              "value": "={{ \"Social DM - \" + ($json.platform || \"Unknown Platform\") }}"
+            },
+            {
+              "id": "message_field",
+              "name": "lead_message",
+              "type": "string",
+              "value": "={{ $json.message || $json.text || $json.content }}"
+            },
+            {
+              "id": "company_field",
+              "name": "lead_company",
+              "type": "string",
+              "value": "={{ $json.company || \"Not specified\" }}"
+            },
+            {
+              "id": "budget_field",
+              "name": "lead_budget",
+              "type": "string",
+              "value": "Not specified"
+            },
+            {
+              "id": "timestamp_field",
+              "name": "lead_timestamp",
+              "type": "string",
+              "value": "={{ $json.timestamp || new Date().toISOString() }}"
+            }
+          ]
+        },
+        "includeOtherFields": false
+      },
+      "typeVersion": 3.4
+    },
+    {
+      "id": "merge-leads",
+      "name": "Merge All Leads",
+      "type": "n8n-nodes-base.merge",
+      "position": [
+        700,
+        400
+      ],
+      "parameters": {
+        "mode": "append",
+        "numberInputs": 3
+      },
+      "typeVersion": 3.2
+    },
+    {
+      "id": "ai-agent",
+      "name": "AI Lead Scorer",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "position": [
+        1000,
+        400
+      ],
+      "parameters": {
+        "text": "Score this lead from 1-10 based on the provided criteria. Here are the lead details:\n\nName: {{ $json.lead_name }}\nEmail: {{ $json.lead_email }}\nSource: {{ $json.lead_source }}\nMessage: {{ $json.lead_message }}\nCompany: {{ $json.lead_company }}\nBudget Signals: {{ $json.lead_budget }}\nTimestamp: {{ $json.lead_timestamp }}\n\nPlease analyze and score this lead based on:\n1. Budget signals (mentions of budget, pricing, cost) - 30% weight\n2. Urgency language (urgent, ASAP, immediately, deadline) - 40% weight  \n3. Company size indicators (enterprise, startup, team size) - 30% weight\n\nReturn your analysis in the specified JSON format.",
+        "options": {
+          "systemMessage": "You are an expert lead scoring AI assistant for a B2B sales organization. Your job is to analyze incoming leads and score them from 1-10 based on their likelihood to convert into high-value customers.\n\nScoring Criteria:\n- Budget Signals (30% weight): Look for explicit budget mentions, pricing inquiries, cost discussions, or financial readiness indicators\n- Urgency Language (40% weight): Identify time-sensitive language like \"urgent\", \"ASAP\", \"immediately\", \"deadline\", \"need by\", or specific timelines\n- Company Size (30% weight): Assess company indicators like \"enterprise\", \"Fortune 500\", team size mentions, or domain authority\n\nScoring Scale:\n- 1-3: Poor quality lead (no budget/urgency signals, unclear company info)\n- 4-6: Medium quality lead (some positive indicators but missing key elements)\n- 7-10: High quality lead (strong budget signals, urgent timeline, established company)\n\nAlways provide detailed reasoning for your score and be consistent in your analysis approach. Focus on objective indicators rather than assumptions."
+        },
+        "promptType": "define",
+        "hasOutputParser": true
+      },
+      "typeVersion": 3.1
+    },
+    {
+      "id": "output-parser",
+      "name": "Structured Output Parser",
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "position": [
+        1000,
+        300
+      ],
+      "parameters": {
+        "autoFix": false,
+        "schemaType": "fromJson",
+        "jsonSchemaExample": "{\n\t\"score\": 8,\n\t\"reasoning\": \"High-value lead from enterprise company with clear intent and specific use case mentioned\",\n\t\"key_indicators\": [\"enterprise company\", \"specific use case\", \"budget mentioned\", \"decision maker\"]\n}"
+      },
+      "typeVersion": 1.3
+    },
+    {
+      "id": "route-score",
+      "name": "Route by Score",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        1300,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 3,
+            "leftValue": "",
+            "caseSensitive": false,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "score_condition",
+              "operator": {
+                "type": "number",
+                "operation": "gte",
+                "rightType": "number"
+              },
+              "leftValue": "={{ $json.score }}",
+              "rightValue": 7
+            }
+          ]
+        }
+      },
+      "typeVersion": 2.3
+    },
+    {
+      "id": "slack-hot",
+      "name": "Slack Hot Leads",
+      "type": "n8n-nodes-base.slack",
+      "onError": "continueRegularOutput",
+      "position": [
+        1600,
+        300
+      ],
+      "parameters": {
+        "text": "=\ud83d\udd25 *Hot Lead Alert* (Score: {{ $json.score }}/10)\n\n*Name:* {{ $json.lead_name }}\n*Email:* {{ $json.lead_email }}\n*Source:* {{ $json.lead_source }}\n*Company:* {{ $json.lead_company }}\n\n*Message:* {{ $json.lead_message }}\n\n*AI Analysis:* {{ $json.reasoning }}\n\n*Key Indicators:* {{ $json.key_indicators.join(\", \") }}\n\n:calendar: *Book a meeting:* https://calendly.com/your-team/discovery-call",
+        "select": "channel",
+        "resource": "message",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "hotleads",
+          "cachedResultName": "hot-leads"
+        },
+        "operation": "post",
+        "messageType": "text",
+        "otherOptions": {}
+      },
+      "typeVersion": 2.4
+    },
+    {
+      "id": "sheets-nurture",
+      "name": "Add to Nurture List",
+      "type": "n8n-nodes-base.googleSheets",
+      "onError": "continueRegularOutput",
+      "position": [
+        1600,
+        500
+      ],
+      "parameters": {
+        "columns": {
+          "value": {
+            "Date": "={{ $json.lead_timestamp }}",
+            "Name": "={{ $json.lead_name }}",
+            "Email": "={{ $json.lead_email }}",
+            "Score": "={{ $json.score }}",
+            "Budget": "={{ $json.lead_budget }}",
+            "Source": "={{ $json.lead_source }}",
+            "Status": "New",
+            "Company": "={{ $json.lead_company }}",
+            "Message": "={{ $json.lead_message }}",
+            "AI_Reasoning": "={{ $json.reasoning }}",
+            "Budget_Score": "={{ $json.budget_score }}",
+            "Company_Score": "={{ $json.company_score }}",
+            "Urgency_Score": "={{ $json.urgency_score }}"
+          },
+          "schema": [
+            {
+              "id": "Date",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Date",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Name",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Name",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Email",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Email",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Source",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Source",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Company",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Company",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Message",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Message",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Budget",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Budget",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Score",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Score",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Budget_Score",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Budget_Score",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Urgency_Score",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Urgency_Score",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Company_Score",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Company_Score",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "AI_Reasoning",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "AI_Reasoning",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status",
+              "type": "string",
+              "display": true,
+              "options": [],
+              "required": false,
+              "displayName": "Status",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            }
+          ],
+          "mappingMode": "defineBelow",
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "resource": "sheet",
+        "operation": "append",
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Nurture Leads",
+          "cachedResultName": "Nurture Leads"
+        },
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "your-spreadsheet-id",
+          "cachedResultName": "your-spreadsheet-id"
+        }
+      },
+      "typeVersion": 4.7
+    },
+    {
+      "id": "gmail-followup",
+      "name": "Send Follow-up Email",
+      "type": "n8n-nodes-base.gmail",
+      "onError": "continueRegularOutput",
+      "position": [
+        1800,
+        500
+      ],
+      "parameters": {
+        "sendTo": "={{ $json.lead_email }}",
+        "message": "=<p>Hi {{ $json.lead_name }},</p>\n\n<p>Thank you for reaching out to us via {{ $json.lead_source }}. We received your message and wanted to follow up personally.</p>\n\n<p><strong>Your inquiry:</strong><br>{{ $json.lead_message }}</p>\n\n<p>We would love to learn more about {{ $json.lead_company }} and how we can help. Here are some resources that might be helpful:</p>\n\n<ul>\n<li><a href=\"https://your-website.com/resources\">Resource Library</a></li>\n<li><a href=\"https://your-website.com/case-studies\">Success Stories</a></li>\n<li><a href=\"https://calendly.com/your-team/consultation\">Schedule a Free Consultation</a></li>\n</ul>\n\n<p>We will be reaching out again in a few days, but feel free to reply to this email or book a time that works for you.</p>\n\n<p>Best regards,<br>Your Sales Team</p>",
+        "options": {},
+        "subject": "Thank you for your interest - Lets connect!",
+        "resource": "message",
+        "emailType": "html",
+        "operation": "send"
+      },
+      "typeVersion": 2.2
+    },
+    {
+      "id": "anthropic-model",
+      "name": "Anthropic Claude",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "onError": "continueRegularOutput",
+      "position": [
+        1000,
+        200
+      ],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "[REDACTED]",
+          "cachedResultName": "Claude Sonnet 4"
+        },
+        "options": {
+          "temperature": 0.2,
+          "maxTokensToSample": "[REDACTED]"
+        }
+      },
+      "typeVersion": 1.3
+    },
+    {
+      "id": "dedup-leads",
+      "name": "Deduplicate Leads",
+      "type": "n8n-nodes-base.removeDuplicates",
+      "onError": "continueRegularOutput",
+      "position": [
+        800,
+        400
+      ],
+      "parameters": {
+        "logic": "[REDACTED_TOKEN]",
+        "options": {
+          "scope": "node",
+          "historySize": 1000
+        },
+        "operation": "[REDACTED_TOKEN]",
+        "dedupeValue": "={{ $json.lead_email }}"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "position": [
+        500,
+        100
+      ],
+      "parameters": {
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          }
+        },
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: \"received\", lead_email: $json.lead_email, lead_name: $json.lead_name, message: \"Thank you for your submission. We will be in touch shortly.\" }) }}"
+      },
+      "typeVersion": 1.5
+    }
+  ],
+  "connections": {
+    "Email IMAP": {
+      "main": [
+        [
+          {
+            "node": "Normalize Email Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Form Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Form Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Lead Scorer": {
+      "main": [
+        [
+          {
+            "node": "Route by Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Score": {
+      "main": [
+        [
+          {
+            "node": "Slack Hot Leads",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Add to Nurture List",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge All Leads": {
+      "main": [
+        [
+          {
+            "node": "Deduplicate Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Poll Social DMs": {
+      "main": [
+        [
+          {
+            "node": "Normalize Social Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anthropic Claude": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Lead Scorer",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deduplicate Leads": {
+      "main": [
+        [
+          {
+            "node": "AI Lead Scorer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add to Nurture List": {
+      "main": [
+        [
+          {
+            "node": "Send Follow-up Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Form Data": {
+      "main": [
+        [
+          {
+            "node": "Merge All Leads",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Email Data": {
+      "main": [
+        [
+          {
+            "node": "Merge All Leads",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Normalize Social Data": {
+      "main": [
+        [
+          {
+            "node": "Merge All Leads",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Schedule Social Polling": {
+      "main": [
+        [
+          {
+            "node": "Poll Social DMs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Lead Scorer",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

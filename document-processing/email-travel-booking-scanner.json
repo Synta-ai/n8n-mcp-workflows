@@ -1,0 +1,471 @@
+{
+  "name": "Email Travel Booking Scanner",
+  "description": "Scans Gmail hourly for travel booking emails, classifies and extracts with Claude, deduplicates, updates trip log, notifies on new bookings.",
+  "nodes": [
+    {
+      "id": "schedule-trigger",
+      "name": "Hourly Scan",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [
+        260,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "typeVersion": 1.2
+    },
+    {
+      "id": "webhook-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "position": [
+        260,
+        500
+      ],
+      "webhookId": "travel-email-scan-manual",
+      "parameters": {
+        "path": "[REDACTED]",
+        "options": {},
+        "httpMethod": "POST",
+        "responseMode": "onReceived"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "gmail-cfa",
+      "name": "Search CFA Gmail",
+      "type": "n8n-nodes-base.gmail",
+      "onError": "continueErrorOutput",
+      "position": [
+        500,
+        250
+      ],
+      "parameters": {
+        "limit": 20,
+        "filters": {
+          "q": "subject:(confirmation OR confirmed OR booking OR reservation OR itinerary OR \"e-ticket\" OR \"flight receipt\" OR \"hotel receipt\" OR \"rental confirmation\") -category:promotions -category:spam -category:social -subject:newsletter -subject:unsubscribe",
+          "receivedAfter": "={{ new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() }}"
+        },
+        "resource": "message",
+        "operation": "getAll",
+        "returnAll": false
+      },
+      "typeVersion": 2.2,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "gmail-personal",
+      "name": "Search Personal Gmail",
+      "type": "n8n-nodes-base.gmail",
+      "onError": "continueErrorOutput",
+      "position": [
+        500,
+        450
+      ],
+      "parameters": {
+        "limit": 20,
+        "filters": {
+          "q": "subject:(confirmation OR confirmed OR booking OR reservation OR itinerary OR \"e-ticket\" OR \"flight receipt\" OR \"hotel receipt\" OR \"rental confirmation\") -category:promotions -category:spam -category:social -subject:newsletter -subject:unsubscribe",
+          "receivedAfter": "={{ new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() }}"
+        },
+        "resource": "message",
+        "operation": "getAll",
+        "returnAll": false
+      },
+      "typeVersion": 2.2,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "merge-emails",
+      "name": "Merge Email Results",
+      "type": "n8n-nodes-base.merge",
+      "position": [
+        740,
+        350
+      ],
+      "parameters": {
+        "mode": "append"
+      },
+      "typeVersion": 3.2
+    },
+    {
+      "id": "drive-download",
+      "name": "Download Trip Log",
+      "type": "n8n-nodes-base.googleDrive",
+      "onError": "continueErrorOutput",
+      "position": [
+        960,
+        350
+      ],
+      "parameters": {
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "[REDACTED_TOKEN]",
+          "cachedResultName": "[REDACTED_TOKEN]"
+        },
+        "options": {
+          "binaryPropertyName": "triplog"
+        },
+        "resource": "file",
+        "operation": "download"
+      },
+      "typeVersion": 3
+    },
+    {
+      "id": "code-dedup",
+      "name": "Filter & Dedup",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1180,
+        350
+      ],
+      "parameters": {
+        "jsCode": "// Get all email items from merge (could include phantom empties from alwaysOutputData)\nconst emailItems = $('Merge Email Results').all();\n\n// Get trip log binary and parse existing email IDs\nlet existingEmailIds = new Set();\ntry {\n  const tripLogBinary = $('Download Trip Log').first().binary?.triplog;\n  if (tripLogBinary) {\n    const tripLogText = Buffer.from(tripLogBinary.data, 'base64').toString('utf8');\n    const tripLog = JSON.parse(tripLogText);\n    if (tripLog.entries) {\n      for (const entry of tripLog.entries) {\n        if (entry.email_id) existingEmailIds.add(entry.email_id);\n      }\n    }\n  }\n} catch (e) {\n  // Trip log empty or parse error \u2014 no existing IDs\n}\n\n// Filter: only real emails (have an id) that haven't been processed yet\nconst newEmails = emailItems.filter(item => {\n  const json = item.json;\n  return json.id && json.id.length > 0 && !existingEmailIds.has(json.id);\n});\n\nif (newEmails.length === 0) {\n  return [{ json: { hasNew: false, count: 0, emails: [] } }];\n}\n\n// Build condensed email summaries for Claude classification\nconst emailSummaries = newEmails.map(item => {\n  const json = item.json;\n  // Extract plain text body, truncate to save tokens\n  const body = (json.textPlain || json.snippet || '').substring(0, 1500);\n  return {\n    email_id: json.id,\n    subject: json.subject || '',\n    from: json.from?.text || json.from || '',\n    date: json.date || json.internalDate || '',\n    body: body,\n    labels: json.labelIds || []\n  };\n});\n\nreturn [{\n  json: {\n    hasNew: true,\n    count: emailSummaries.length,\n    emails: emailSummaries,\n    existingEntryCount: existingEmailIds.size\n  }\n}];"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "if-new",
+      "name": "Has New Emails?",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        1400,
+        350
+      ],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": false,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "has-new-check",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.hasNew }}",
+              "rightValue": true
+            }
+          ]
+        }
+      },
+      "typeVersion": 2.2
+    },
+    {
+      "id": "chain-classify",
+      "name": "Classify & Extract",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "position": [
+        1620,
+        250
+      ],
+      "parameters": {
+        "text": "Analyze these emails and extract confirmed travel bookings.",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "={{ JSON.stringify($json.emails) }}"
+            }
+          ]
+        },
+        "promptType": "define",
+        "hasOutputParser": false
+      },
+      "typeVersion": 1.5
+    },
+    {
+      "id": "llm-claude",
+      "name": "Claude Sonnet",
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "position": [
+        1620,
+        460
+      ],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "[REDACTED]",
+          "cachedResultName": "Claude Sonnet 4.5"
+        },
+        "options": {
+          "temperature": 0.1,
+          "systemMessage": "You are a travel email classifier and data extractor. You receive an array of email summaries. For each email, determine if it is a CONFIRMED travel booking (not promotional, not a deal alert, not spam, not a newsletter).\n\nConfirmed bookings include: flight confirmations, hotel/Airbnb reservations, car rental confirmations, restaurant reservations (OpenTable, Resy, etc.), tour/activity bookings, train/ferry tickets, cruise bookings.\n\nNOT confirmed bookings: promotional emails, deal alerts, loyalty program updates, newsletters, credit card travel benefits, search alerts, price drop notifications, unsubscribe confirmations.\n\nFor each CONFIRMED booking, extract:\n- type: one of [flight, hotel, car_rental, restaurant, tour_activity, train_ferry, cruise, other_booking]\n- provider: airline/hotel chain/company name\n- confirmation_number: if visible in email\n- destination: city, region, or country\n- dates: { start: 'YYYY-MM-DD', end: 'YYYY-MM-DD' or null }\n- details: one-line summary (e.g., 'LAX \u2192 FCO, United UA1234, depart 4:15 PM Jul 1')\n- trip_guess: best guess at trip name based on destination and dates (e.g., 'italy_2026')\n\nRespond with ONLY a valid JSON array. Each element: { email_id, is_booking: true/false, type, provider, confirmation_number, destination, dates, details, trip_guess }. For non-bookings, include only { email_id, is_booking: false }.\n\nIMPORTANT: When in doubt, mark is_booking: false. Better to miss one than to log spam.",
+          "maxTokensToSample": "[REDACTED]"
+        }
+      },
+      "typeVersion": 1.3
+    },
+    {
+      "id": "code-build",
+      "name": "Build Log Entries",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1840,
+        250
+      ],
+      "parameters": {
+        "jsCode": "// Parse Claude's classification output\nconst llmOutput = $input.first().json.text || $input.first().json.output || '';\nlet classifications;\ntry {\n  // Extract JSON array from response (handle markdown code blocks)\n  const jsonMatch = llmOutput.match(/\\[\\s*\\{[\\s\\S]*\\}\\s*\\]/)\n  classifications = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(llmOutput);\n} catch (e) {\n  return [{ json: { error: 'Failed to parse LLM output', raw: llmOutput, newEntries: 0 } }];\n}\n\n// Filter to confirmed bookings only\nconst bookings = classifications.filter(c => c.is_booking === true);\n\nif (bookings.length === 0) {\n  return [{ json: { newEntries: 0, message: 'No confirmed bookings found in new emails' } }];\n}\n\n// Download and parse existing trip log\nlet tripLog;\ntry {\n  const tripLogBinary = $('Download Trip Log').first().binary?.triplog;\n  const tripLogText = Buffer.from(tripLogBinary.data, 'base64').toString('utf8');\n  tripLog = JSON.parse(tripLogText);\n} catch (e) {\n  tripLog = { version: '1.0', entries: [] };\n}\n\n// Build new entries\nconst now = new Date().toISOString();\nfor (const booking of bookings) {\n  tripLog.entries.push({\n    id: `email_${booking.email_id.substring(0, 12)}`,\n    timestamp: now,\n    type: `email_${booking.type}`,\n    trip: booking.trip_guess || 'unknown',\n    source_email: 'auto_detected',\n    email_id: booking.email_id,\n    confirmation_number: booking.confirmation_number || null,\n    provider: booking.provider || '',\n    destination: booking.destination || '',\n    dates: booking.dates || null,\n    details: booking.details || '',\n    note: `Auto-extracted from email on ${now.split('T')[0]}`,\n    tags: ['email_scan', booking.type]\n  });\n}\n\n// Convert to binary for Drive upload\nconst updatedJson = JSON.stringify(tripLog, null, 2);\nconst base64 = Buffer.from(updatedJson, 'utf8').toString('base64');\n\nreturn [{\n  json: {\n    newEntries: bookings.length,\n    totalEntries: tripLog.entries.length,\n    bookingSummary: bookings.map(b => `${b.type}: ${b.provider} \u2014 ${b.destination} (${b.dates?.start || 'TBD'})`)\n  },\n  binary: {\n    triplog: {\n      data: base64,\n      mimeType: 'application/json',\n      fileName: 'trip_log.json'\n    }\n  }\n}];"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "drive-upload",
+      "name": "Update Trip Log",
+      "type": "n8n-nodes-base.googleDrive",
+      "onError": "continueErrorOutput",
+      "position": [
+        2060,
+        250
+      ],
+      "parameters": {
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "[REDACTED_TOKEN]",
+          "cachedResultName": "[REDACTED_TOKEN]"
+        },
+        "options": {},
+        "resource": "file",
+        "operation": "update",
+        "inputDataFieldName": "triplog"
+      },
+      "typeVersion": 3
+    },
+    {
+      "id": "slack-notify",
+      "name": "Notify New Bookings",
+      "type": "n8n-nodes-base.httpRequest",
+      "onError": "continueErrorOutput",
+      "position": [
+        2280,
+        250
+      ],
+      "parameters": {
+        "url": "https://[domain]/api/chat.postMessage",
+        "method": "POST",
+        "options": {
+          "timeout": 10000
+        },
+        "jsonBody": "={{ JSON.stringify({ channel: 'U3LJSBAQ2', text: '\u2708\ufe0f Email Scanner found ' + $json.newEntries + ' new travel booking(s):\\n' + ($json.bookingSummary || []).join('\\n') + '\\n\\nTrip log now has ' + $json.totalEntries + ' total entries.' }) }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "authentication": "[REDACTED]",
+        "nodeCredentialType": "[REDACTED]"
+      },
+      "typeVersion": 4.2
+    },
+    {
+      "id": "slack-error",
+      "name": "Notify Error",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        2060,
+        500
+      ],
+      "parameters": {
+        "url": "https://[domain]/api/chat.postMessage",
+        "method": "POST",
+        "options": {
+          "timeout": 10000
+        },
+        "jsonBody": "={{ JSON.stringify({ channel: 'U3LJSBAQ2', text: '\u26a0\ufe0f Email Scanner Error\\n\\n' + ($json.error || $json.message || JSON.stringify($json).substring(0, 500)) }) }}",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "authentication": "[REDACTED]",
+        "nodeCredentialType": "[REDACTED]"
+      },
+      "typeVersion": 4.2
+    }
+  ],
+  "connections": {
+    "Hourly Scan": {
+      "main": [
+        [
+          {
+            "node": "Search CFA Gmail",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Search Personal Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Sonnet": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Classify & Extract",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter & Dedup": {
+      "main": [
+        [
+          {
+            "node": "Has New Emails?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Search CFA Gmail",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Search Personal Gmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has New Emails?": {
+      "main": [
+        [
+          {
+            "node": "Classify & Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Trip Log": {
+      "main": [
+        [
+          {
+            "node": "Notify New Bookings",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search CFA Gmail": {
+      "main": [
+        [
+          {
+            "node": "Merge Email Results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Log Entries": {
+      "main": [
+        [
+          {
+            "node": "Update Trip Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Trip Log": {
+      "main": [
+        [
+          {
+            "node": "Filter & Dedup",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify & Extract": {
+      "main": [
+        [
+          {
+            "node": "Build Log Entries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Email Results": {
+      "main": [
+        [
+          {
+            "node": "Download Trip Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Personal Gmail": {
+      "main": [
+        [
+          {
+            "node": "Merge Email Results",
+            "type": "main",
+            "index": 1
+          }
+        ],
+        [
+          {
+            "node": "Notify Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

@@ -1,21 +1,30 @@
 # n8n Production Workflow Examples
 
-Real n8n workflows from production, exported and anonymised from Synta usage data. Each one is under 20 nodes, deployed by real users, and built around a specific use case.
+Real n8n workflows from production, exported and anonymised from synta mcp usage data. Each one is deployed by real users and built around a specific use case.
 
 ## Workflows
 
-| File | Nodes | Use Case |
-|---|---|---|
-| `wordpress-publish-to-social-caption.json` | 9 | Auto-generate social captions on WordPress publish |
-| `email-attachment-document-processor.json` | 18 | Extract, classify and archive email attachments |
-| `article-scraper-to-branded-post.json` | 15 | Scrape article, generate branded image and social post |
-| `call-transcript-reviewer-ghl.json` | 11 | Review call transcripts with Claude, score to Sheets |
-| `email-travel-booking-scanner.json` | 14 | Scan Gmail for travel bookings, update trip log |
-| `multi-source-lead-scorer.json` | 17 | Score leads from form, email and social with AI |
+### content-social/
+| File | Use Case |
+|---|---|
+| `wordpress-publish-to-social-caption.json` | Auto-generate social captions on WordPress publish, create branded image, notify via WhatsApp |
+| `article-scraper-to-branded-post.json` | Scrape article, generate branded image and social post via Claude |
+
+### lead-generation/
+| File | Use Case |
+|---|---|
+| `multi-source-lead-scorer.json` | Collect leads from form, email and social DMs, score with AI, route hot leads to Slack |
+| `call-transcript-reviewer-ghl.json` | Pull call transcripts from Dialpad via GHL webhook, review with Claude, save scored results to Sheets |
+
+### document-processing/
+| File | Use Case |
+|---|---|
+| `email-attachment-document-processor.json` | Extract, classify and archive email attachments to Google Drive |
+| `email-travel-booking-scanner.json` | Scan Gmail hourly for travel bookings, extract with Claude, deduplicate, update trip log |
 
 ## How to use
 
-1. Copy the `workflow` object from any file
+1. Copy the contents of any `.json` file
 2. In n8n, go to **Workflows → Import from JSON**
 3. Paste and import
 4. Reconnect credentials and update any hardcoded values
