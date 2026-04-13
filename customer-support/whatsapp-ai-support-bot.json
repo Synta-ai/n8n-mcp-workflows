@@ -1,0 +1,458 @@
+{
+  "name": "WhatsApp AI Support Bot",
+  "nodes": [
+    {
+      "id": "whatsapp-trigger",
+      "name": "WhatsApp Trigger",
+      "type": "n8n-nodes-base.whatsAppTrigger",
+      "position": [240, 300],
+      "webhookId": "whatsapp-support-webhook",
+      "parameters": {
+        "updates": ["messages"]
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "extract-message",
+      "name": "Extract Message Data",
+      "type": "n8n-nodes-base.set",
+      "position": [460, 300],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "msg-text",
+              "name": "messageText",
+              "type": "string",
+              "value": "={{ $json.messages[0].text.body }}"
+            },
+            {
+              "id": "phone",
+              "name": "customerPhone",
+              "type": "string",
+              "value": "={{ $json.messages[0].from }}"
+            },
+            {
+              "id": "msg-id",
+              "name": "messageId",
+              "type": "string",
+              "value": "={{ $json.messages[0].id }}"
+            },
+            {
+              "id": "customer-name",
+              "name": "customerName",
+              "type": "string",
+              "value": "={{ $json.contacts[0].profile.name }}"
+            }
+          ]
+        },
+        "duplicateItem": false
+      },
+      "typeVersion": 3.4
+    },
+    {
+      "id": "intent-classifier",
+      "name": "Classify Intent",
+      "type": "n8n-nodes-base.openAi",
+      "position": [680, 300],
+      "parameters": {
+        "prompt": "=Analyze this customer message and classify the intent.\n\nMessage: {{ $json.messageText }}\n\nClassify as ONE of these intents:\n- FAQ: General questions about hours, location, services, pricing, policies\n- BOOKING: Appointment scheduling, booking requests, availability checks\n- HUMAN: Complaints, complex issues, explicit requests for human agent\n\nRespond with ONLY the intent word: FAQ, BOOKING, or HUMAN",
+        "modelId": "gpt-4o-mini",
+        "options": {
+          "temperature": 0.1
+        },
+        "resource": "text",
+        "operation": "complete"
+      },
+      "typeVersion": 1.1
+    },
+    {
+      "id": "switch-router",
+      "name": "Route by Intent",
+      "type": "n8n-nodes-base.switch",
+      "position": [900, 300],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "FAQ",
+              "conditions": {
+                "options": {
+                  "version": 3,
+                  "leftValue": "",
+                  "caseSensitive": false,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "faq-condition",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.choices[0].message.content.trim().toUpperCase() }}",
+                    "rightValue": "FAQ"
+                  }
+                ]
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "Booking",
+              "conditions": {
+                "options": {
+                  "version": 3,
+                  "leftValue": "",
+                  "caseSensitive": false,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "booking-condition",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.choices[0].message.content.trim().toUpperCase() }}",
+                    "rightValue": "BOOKING"
+                  }
+                ]
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "Human",
+              "conditions": {
+                "options": {
+                  "version": 3,
+                  "leftValue": "",
+                  "caseSensitive": false,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "human-condition",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.choices[0].message.content.trim().toUpperCase() }}",
+                    "rightValue": "HUMAN"
+                  }
+                ]
+              },
+              "renameOutput": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "typeVersion": 3.4
+    },
+    {
+      "id": "ai-agent",
+      "name": "AI Support Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "position": [1160, 180],
+      "parameters": {
+        "text": "={{ $('Extract Message Data').item.json.messageText }}",
+        "options": {
+          "systemMessage": "You are a helpful customer support AI assistant for a business. Your role is to:\n\n1. Answer customer questions accurately using the knowledge base\n2. Help customers book appointments using the calendar tool\n3. Maintain a friendly, professional, and empathetic tone\n4. Keep responses concise (2-3 sentences max)\n5. Use the customer's name when available to personalize responses\n\nIMPORTANT:\n- Always check the knowledge base first before answering questions\n- When booking appointments, confirm date, time, and service type with the customer\n- If you cannot help with something, let the customer know a human will assist\n- Never make up information — only use data from tools\n- Format responses for WhatsApp (short paragraphs)\n\nCustomer Name: {{ $('Extract Message Data').item.json.customerName }}\nCustomer Phone: {{ $('Extract Message Data').item.json.customerPhone }}"
+        },
+        "promptType": "define",
+        "hasOutputParser": false
+      },
+      "typeVersion": 3.1
+    },
+    {
+      "id": "openai-model",
+      "name": "OpenAI Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "position": [1160, 60],
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "id",
+          "value": "gpt-4o-mini",
+          "cachedResultName": "gpt-4o-mini"
+        },
+        "options": {
+          "temperature": 0.7
+        }
+      },
+      "typeVersion": 1.3
+    },
+    {
+      "id": "memory",
+      "name": "Conversation Memory",
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "position": [1360, 60],
+      "parameters": {
+        "sessionKey": "={{ $('Extract Message Data').item.json.customerPhone }}",
+        "sessionIdType": "customKey",
+        "contextWindowLength": 10
+      },
+      "typeVersion": 1.3
+    },
+    {
+      "id": "vector-store-tool",
+      "name": "FAQ Knowledge Base",
+      "type": "@n8n/n8n-nodes-langchain.toolVectorStore",
+      "position": [960, 60],
+      "parameters": {
+        "topK": 3,
+        "description": "company policies, business hours, services offered, pricing, location, and frequently asked questions. Use this tool whenever the customer asks about what the company offers, when they're open, where they're located, or any general information about the business."
+      },
+      "typeVersion": 1.1
+    },
+    {
+      "id": "pinecone-vectorstore",
+      "name": "Pinecone Vector Store",
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePinecone",
+      "position": [760, 60],
+      "parameters": {
+        "mode": "retrieve",
+        "pineconeIndex": {
+          "__rl": true,
+          "mode": "id",
+          "value": "customer-support-kb",
+          "cachedResultName": "customer-support-kb"
+        }
+      },
+      "typeVersion": 1.3
+    },
+    {
+      "id": "openai-embeddings",
+      "name": "OpenAI Embeddings",
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "position": [560, 60],
+      "parameters": {
+        "options": {}
+      },
+      "typeVersion": 1.2
+    },
+    {
+      "id": "calendar-tool",
+      "name": "Google Calendar Tool",
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "position": [960, 180],
+      "parameters": {
+        "limit": 10,
+        "options": {
+          "timeMax": "={{ $now.plus({ days: 30 }).toISO() }}",
+          "timeMin": "={{ $now.toISO() }}"
+        },
+        "calendar": {
+          "__rl": true,
+          "mode": "id",
+          "value": "primary",
+          "cachedResultName": "primary"
+        },
+        "resource": "event",
+        "operation": "getAll",
+        "returnAll": false,
+        "toolDescription": "Use this tool to check calendar availability and book appointments. You can:\n1. Get available time slots for the next 30 days\n2. Create new appointments with customer name, date, time, and service type\n3. Check existing bookings to avoid double-booking\n\nAlways confirm the appointment details with the customer before creating the event."
+      },
+      "typeVersion": 1.3
+    },
+    {
+      "id": "prepare-escalation",
+      "name": "Prepare Escalation Data",
+      "type": "n8n-nodes-base.set",
+      "position": [1160, 420],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "escalation-msg",
+              "name": "escalationMessage",
+              "type": "string",
+              "value": "Thank you for contacting us. I'm connecting you with a member of our team who will assist you shortly. Please hold on."
+            },
+            {
+              "id": "slack-text",
+              "name": "slackNotification",
+              "type": "string",
+              "value": "=*Customer Escalation Required*\n\nCustomer: {{ $('Extract Message Data').item.json.customerName }}\nPhone: {{ $('Extract Message Data').item.json.customerPhone }}\nMessage: {{ $('Extract Message Data').item.json.messageText }}\n\nPlease respond to this customer via WhatsApp"
+            }
+          ]
+        },
+        "duplicateItem": false
+      },
+      "typeVersion": 3.4
+    },
+    {
+      "id": "notify-slack",
+      "name": "Notify Team (Slack)",
+      "type": "n8n-nodes-base.slack",
+      "position": [1380, 360],
+      "parameters": {
+        "text": "={{ $json.slackNotification }}",
+        "select": "channel",
+        "resource": "message",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_SLACK_CHANNEL_ID",
+          "cachedResultName": "YOUR_SLACK_CHANNEL_ID"
+        },
+        "operation": "post",
+        "otherOptions": {}
+      },
+      "typeVersion": 2.2
+    },
+    {
+      "id": "log-sheets",
+      "name": "Log Escalations to Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [1380, 480],
+      "parameters": {
+        "columns": {
+          "value": {
+            "Phone": "={{ $('Extract Message Data').item.json.customerPhone }}",
+            "Status": "Pending",
+            "Message": "={{ $('Extract Message Data').item.json.messageText }}",
+            "Timestamp": "={{ $now.toISO() }}",
+            "Customer Name": "={{ $('Extract Message Data').item.json.customerName }}"
+          },
+          "schema": [
+            {
+              "id": "Timestamp",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "displayName": "Timestamp",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Customer Name",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "displayName": "Customer Name",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Phone",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "displayName": "Phone",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Message",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "displayName": "Message",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "displayName": "Status",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            }
+          ],
+          "mappingMode": "defineBelow",
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {},
+        "operation": "appendOrUpdate",
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Escalations",
+          "cachedResultName": "Escalations"
+        },
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_SPREADSHEET_ID",
+          "cachedResultName": "YOUR_SPREADSHEET_ID"
+        }
+      },
+      "typeVersion": 4.5
+    },
+    {
+      "id": "send-whatsapp-response",
+      "name": "Send WhatsApp Reply",
+      "type": "n8n-nodes-base.whatsApp",
+      "position": [1600, 300],
+      "parameters": {
+        "message": "={{ $json.output || $json.escalationMessage }}",
+        "resource": "message",
+        "operation": "send",
+        "messageType": "text",
+        "phoneNumberId": "YOUR_WHATSAPP_PHONE_NUMBER_ID",
+        "recipientPhoneNumber": "={{ $('Extract Message Data').item.json.customerPhone }}"
+      },
+      "typeVersion": 1.1
+    }
+  ],
+  "connections": {
+    "WhatsApp Trigger": {
+      "main": [[{ "node": "Extract Message Data", "type": "main", "index": 0 }]]
+    },
+    "Extract Message Data": {
+      "main": [[{ "node": "Classify Intent", "type": "main", "index": 0 }]]
+    },
+    "Classify Intent": {
+      "main": [[{ "node": "Route by Intent", "type": "main", "index": 0 }]]
+    },
+    "Route by Intent": {
+      "main": [
+        [{ "node": "AI Support Agent", "type": "main", "index": 0 }],
+        [{ "node": "AI Support Agent", "type": "main", "index": 0 }],
+        [{ "node": "Prepare Escalation Data", "type": "main", "index": 0 }]
+      ]
+    },
+    "AI Support Agent": {
+      "main": [[{ "node": "Send WhatsApp Reply", "type": "main", "index": 0 }]]
+    },
+    "Prepare Escalation Data": {
+      "main": [[
+        { "node": "Notify Team (Slack)", "type": "main", "index": 0 },
+        { "node": "Log Escalations to Sheets", "type": "main", "index": 0 },
+        { "node": "Send WhatsApp Reply", "type": "main", "index": 0 }
+      ]]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [[{ "node": "AI Support Agent", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "Conversation Memory": {
+      "ai_memory": [[{ "node": "AI Support Agent", "type": "ai_memory", "index": 0 }]]
+    },
+    "FAQ Knowledge Base": {
+      "ai_tool": [[{ "node": "AI Support Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Google Calendar Tool": {
+      "ai_tool": [[{ "node": "AI Support Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Pinecone Vector Store": {
+      "ai_vectorStore": [[{ "node": "FAQ Knowledge Base", "type": "ai_vectorStore", "index": 0 }]]
+    },
+    "OpenAI Embeddings": {
+      "ai_embedding": [[{ "node": "Pinecone Vector Store", "type": "ai_embedding", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

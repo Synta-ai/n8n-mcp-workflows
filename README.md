@@ -17,6 +17,11 @@ Real n8n workflows from production, exported and anonymised from synta mcp usage
 | `call-transcript-reviewer-ghl.json` | Pull call transcripts from Dialpad via GHL webhook, review with Claude, save scored results to Sheets |
 | `google-maps-lead-scraper.json` | Scrape Google Maps daily, extract emails from business websites, AI-enrich and score each lead, save to Airtable |
 
+### customer-support/
+| File | Use Case |
+|---|---|
+| `whatsapp-ai-support-bot.json` | Classify incoming WhatsApp messages as FAQ, BOOKING, or HUMAN, route to an AI agent with Pinecone knowledge base and Google Calendar access, escalate complaints to Slack with full context |
+
 ### finance-operations/
 | File | Use Case |
 |---|---|
