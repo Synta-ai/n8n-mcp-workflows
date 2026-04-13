@@ -1,0 +1,499 @@
+{
+  "name": "Overdue Invoice Follow-Up System",
+  "nodes": [
+    {
+      "id": "sticky-note-overview",
+      "name": "Overview",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [-200, -200],
+      "parameters": {
+        "color": 7,
+        "width": 600,
+        "height": 310,
+        "content": "## Overdue Invoice Follow-Up System\n\n**How it works:**\n1. Runs daily at 9 AM\n2. Pulls invoices from Google Sheets (populated from Stripe / QuickBooks / FreshBooks via their APIs or manual export)\n3. Calculates days overdue\n4. Routes based on escalation tier:\n   - **3 days** → Friendly email reminder\n   - **7 days** → Firm follow-up with exact invoice details\n   - **14 days** → Slack alert to owner for personal outreach\n5. Updates tracking status back to Google Sheets\n\n**Sheet columns required:** Invoice ID | Client Name | Client Email | Amount | Due Date | Payment Link | Status | Last Reminder Sent | Reminder Stage\n\n> Each invoice only receives each reminder once — the workflow tracks stage and only escalates forward."
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "sticky-note-stripe",
+      "name": "Stripe Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [-200, 150],
+      "parameters": {
+        "color": 5,
+        "width": 580,
+        "height": 280,
+        "content": "## Do you need the Stripe node?\n\n**Short answer: No, it's optional.**\n\nYou have 3 approaches:\n\n**Option A (this workflow):** Use Google Sheets as your invoice hub. Populate it via:\n  - Stripe webhook → Sheets on invoice creation\n  - Manual export from Stripe/QuickBooks/FreshBooks\n\n**Option B:** Replace the `Get Invoices` node with an HTTP Request to `https://api.stripe.com/v1/invoices?status=open` using Bearer auth. Same logic applies downstream.\n\n**Option C:** Use the native `n8n-nodes-base.stripe` node to list invoices directly.\n\n**Sheets-based approach is recommended** — it works across Stripe, QuickBooks, AND FreshBooks without changing any downstream logic."
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "trigger",
+      "name": "Daily 9AM Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [200, 0],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * *"
+            }
+          ]
+        }
+      },
+      "typeVersion": 1.2
+    },
+    {
+      "id": "get-invoices",
+      "name": "Get Invoices from Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [440, 0],
+      "parameters": {
+        "filtersUI": {
+          "values": [
+            {
+              "lookupValue": "Unpaid",
+              "lookupColumn": "Status"
+            }
+          ]
+        },
+        "operation": "read",
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Invoices",
+          "cachedResultName": "Invoices"
+        },
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_SPREADSHEET_ID",
+          "cachedResultName": "YOUR_SPREADSHEET_ID"
+        }
+      },
+      "typeVersion": 4.5
+    },
+    {
+      "id": "calc-days-overdue",
+      "name": "Calculate Days Overdue",
+      "type": "n8n-nodes-base.code",
+      "position": [680, 0],
+      "parameters": {
+        "jsCode": "const today = new Date();\nconst results = [];\n\nfor (const item of $input.all()) {\n  const row = { ...item.json };\n  \n  if (!row['Due Date'] || row['Status'] === 'Paid') continue;\n  \n  const dueDate = new Date(row['Due Date']);\n  const diffMs = today - dueDate;\n  const daysOverdue = Math.floor(diffMs / (1000 * 60 * 60 * 24));\n  \n  if (daysOverdue < 3) continue;\n  \n  row.daysOverdue = daysOverdue;\n  row.reminderStage = row['Reminder Stage'] || '0';\n  \n  const stage = parseInt(row.reminderStage);\n  if (daysOverdue >= 14 && stage < 3) row.nextStage = '3';\n  else if (daysOverdue >= 7 && stage < 2) row.nextStage = '2';\n  else if (daysOverdue >= 3 && stage < 1) row.nextStage = '1';\n  else continue;\n  \n  results.push({ json: row });\n}\n\nreturn results;"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "route-by-stage",
+      "name": "Route by Escalation Stage",
+      "type": "n8n-nodes-base.switch",
+      "position": [920, 0],
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "3-day",
+              "conditions": {
+                "options": {
+                  "leftValue": "",
+                  "caseSensitive": false,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.nextStage }}",
+                    "rightValue": "1"
+                  }
+                ]
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "7-day",
+              "conditions": {
+                "options": {
+                  "leftValue": "",
+                  "caseSensitive": false,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.nextStage }}",
+                    "rightValue": "2"
+                  }
+                ]
+              },
+              "renameOutput": true
+            },
+            {
+              "outputKey": "14-day",
+              "conditions": {
+                "options": {
+                  "leftValue": "",
+                  "caseSensitive": false,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.nextStage }}",
+                    "rightValue": "3"
+                  }
+                ]
+              },
+              "renameOutput": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "typeVersion": 3.1
+    },
+    {
+      "id": "email-3day",
+      "name": "Send 3-Day Friendly Reminder",
+      "type": "n8n-nodes-base.gmail",
+      "position": [1160, -200],
+      "parameters": {
+        "sendTo": "={{ $json['Client Email'] }}",
+        "message": "={{ 'Hi ' + $json['Client Name'] + ',\\n\\nJust a friendly nudge — invoice #' + $json['Invoice ID'] + ' for $' + $json['Amount'] + ' was due a few days ago.\\n\\nYou can pay here:\\n' + $json['Payment Link'] + '\\n\\nLet me know if you have any questions!\\n\\nBest regards' }}",
+        "options": {},
+        "subject": "={{ 'Friendly reminder: Invoice #' + $json['Invoice ID'] }}"
+      },
+      "typeVersion": 2.1
+    },
+    {
+      "id": "email-7day",
+      "name": "Send 7-Day Firm Follow-Up",
+      "type": "n8n-nodes-base.gmail",
+      "position": [1160, 0],
+      "parameters": {
+        "sendTo": "={{ $json['Client Email'] }}",
+        "message": "={{ 'Hi ' + $json['Client Name'] + ',\\n\\nInvoice #' + $json['Invoice ID'] + ' for $' + $json['Amount'] + ' is now 7 days past due.\\n\\nPlease arrange payment here: ' + $json['Payment Link'] + '\\n\\nIf payment has already been made, please disregard this message.\\n\\nThank you.' }}",
+        "options": {},
+        "subject": "={{ 'Follow-up: Invoice #' + $json['Invoice ID'] + ' — 7 days past due' }}"
+      },
+      "typeVersion": 2.1
+    },
+    {
+      "id": "slack-14day",
+      "name": "Slack Alert to Owner (14-day)",
+      "type": "n8n-nodes-base.slack",
+      "position": [1160, 200],
+      "parameters": {
+        "text": "={{ '*Invoice needs personal outreach*\\n\\nClient: ' + $json['Client Name'] + '\\nInvoice: #' + $json['Invoice ID'] + '\\nAmount: $' + $json['Amount'] + '\\nDays overdue: ' + $json.daysOverdue + '\\nEmail: ' + $json['Client Email'] + '\\nPayment link: ' + $json['Payment Link'] + '\\n\\nThis invoice is 14+ days overdue.' }}",
+        "channel": "#invoice-alerts",
+        "operation": "sendMessage",
+        "otherOptions": {}
+      },
+      "typeVersion": 2.3
+    },
+    {
+      "id": "update-sheets-3day",
+      "name": "Update Tracking (3-day)",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [1400, -200],
+      "parameters": {
+        "columns": {
+          "value": {
+            "Invoice ID": "={{ $json['Invoice ID'] }}",
+            "Reminder Stage": "=1",
+            "Last Reminder Sent": "={{ $now.toISO() }}"
+          },
+          "schema": [
+            {
+              "id": "Invoice ID",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "displayName": "Invoice ID",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Reminder Stage",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "displayName": "Reminder Stage",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Last Reminder Sent",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "displayName": "Last Reminder Sent",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            }
+          ],
+          "mappingMode": "defineBelow",
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "handlingExtraData": "ignoreIt"
+        },
+        "operation": "update",
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Invoices",
+          "cachedResultName": "Invoices"
+        },
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_SPREADSHEET_ID",
+          "cachedResultName": "YOUR_SPREADSHEET_ID"
+        }
+      },
+      "typeVersion": 4.5
+    },
+    {
+      "id": "update-sheets-7day",
+      "name": "Update Tracking (7-day)",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [1400, 0],
+      "parameters": {
+        "columns": {
+          "value": {
+            "Invoice ID": "={{ $json['Invoice ID'] }}",
+            "Reminder Stage": "=2",
+            "Last Reminder Sent": "={{ $now.toISO() }}"
+          },
+          "schema": [
+            {
+              "id": "Invoice ID",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "displayName": "Invoice ID",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Reminder Stage",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "displayName": "Reminder Stage",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Last Reminder Sent",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "displayName": "Last Reminder Sent",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            }
+          ],
+          "mappingMode": "defineBelow",
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "handlingExtraData": "ignoreIt"
+        },
+        "operation": "update",
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Invoices",
+          "cachedResultName": "Invoices"
+        },
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_SPREADSHEET_ID",
+          "cachedResultName": "YOUR_SPREADSHEET_ID"
+        }
+      },
+      "typeVersion": 4.5
+    },
+    {
+      "id": "update-sheets-14day",
+      "name": "Update Tracking (14-day)",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [1400, 200],
+      "parameters": {
+        "columns": {
+          "value": {
+            "Invoice ID": "={{ $json['Invoice ID'] }}",
+            "Reminder Stage": "=3",
+            "Last Reminder Sent": "={{ $now.toISO() }}"
+          },
+          "schema": [
+            {
+              "id": "Invoice ID",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "displayName": "Invoice ID",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Reminder Stage",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "displayName": "Reminder Stage",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Last Reminder Sent",
+              "type": "string",
+              "display": true,
+              "required": false,
+              "displayName": "Last Reminder Sent",
+              "defaultMatch": false,
+              "canBeUsedToMatch": true
+            }
+          ],
+          "mappingMode": "defineBelow",
+          "matchingColumns": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "handlingExtraData": "ignoreIt"
+        },
+        "operation": "update",
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "Invoices",
+          "cachedResultName": "Invoices"
+        },
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_SPREADSHEET_ID",
+          "cachedResultName": "YOUR_SPREADSHEET_ID"
+        }
+      },
+      "typeVersion": 4.5
+    }
+  ],
+  "connections": {
+    "Daily 9AM Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Invoices from Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Invoices from Sheets": {
+      "main": [
+        [
+          {
+            "node": "Calculate Days Overdue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Days Overdue": {
+      "main": [
+        [
+          {
+            "node": "Route by Escalation Stage",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Escalation Stage": {
+      "main": [
+        [
+          {
+            "node": "Send 3-Day Friendly Reminder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send 7-Day Firm Follow-Up",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Slack Alert to Owner (14-day)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send 3-Day Friendly Reminder": {
+      "main": [
+        [
+          {
+            "node": "Update Tracking (3-day)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send 7-Day Firm Follow-Up": {
+      "main": [
+        [
+          {
+            "node": "Update Tracking (7-day)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack Alert to Owner (14-day)": {
+      "main": [
+        [
+          {
+            "node": "Update Tracking (14-day)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

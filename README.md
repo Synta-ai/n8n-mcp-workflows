@@ -17,6 +17,11 @@ Real n8n workflows from production, exported and anonymised from synta mcp usage
 | `call-transcript-reviewer-ghl.json` | Pull call transcripts from Dialpad via GHL webhook, review with Claude, save scored results to Sheets |
 | `google-maps-lead-scraper.json` | Scrape Google Maps daily, extract emails from business websites, AI-enrich and score each lead, save to Airtable |
 
+### finance-operations/
+| File | Use Case |
+|---|---|
+| `overdue-invoice-follow-up.json` | Run daily, pull unpaid invoices from Sheets, escalate via email at 3/7 days and Slack at 14 days, track reminder stage so each invoice only moves forward |
+
 ### document-processing/
 | File | Use Case |
 |---|---|
