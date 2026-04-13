@@ -22,6 +22,11 @@ Real n8n workflows from production, exported and anonymised from synta mcp usage
 |---|---|
 | `whatsapp-ai-support-bot.json` | Classify incoming WhatsApp messages as FAQ, BOOKING, or HUMAN, route to an AI agent with Pinecone knowledge base and Google Calendar access, escalate complaints to Slack with full context |
 
+### hiring-recruiting/
+| File | Use Case |
+|---|---|
+| `interview-prep-packet-generator.json` | Poll Gem ATS every 5 min, detect candidates entering interview stage, pull profile + prior scorecards + job details, find role alignment doc from Drive, generate full prep packet via Gemini, send to Slack and email |
+
 ### finance-operations/
 | File | Use Case |
 |---|---|

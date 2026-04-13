@@ -1,0 +1,373 @@
+{
+  "name": "Interview Prep Packet Generator",
+  "nodes": [
+    {
+      "id": "trigger-1",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [0, 0],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "typeVersion": 1.2
+    },
+    {
+      "id": "http-1",
+      "name": "Gem: List Recent Applications",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [220, 0],
+      "parameters": {
+        "url": "https://api.gem.com/ats/v0/applications/",
+        "method": "GET",
+        "options": {},
+        "sendQuery": true,
+        "sendHeaders": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "last_activity_after",
+              "value": "={{ $now.minus({minutes: 6}).toISO() }}"
+            },
+            {
+              "name": "status",
+              "value": "active"
+            },
+            {
+              "name": "per_page",
+              "value": "100"
+            }
+          ]
+        },
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "typeVersion": 4.2
+    },
+    {
+      "id": "if-1",
+      "name": "Is Interview Stage?",
+      "type": "n8n-nodes-base.if",
+      "position": [440, 0],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": false,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "operator": { "type": "string", "operation": "notContains" },
+              "leftValue": "={{ $json.current_stage?.name ?? '' }}",
+              "rightValue": "Application Review"
+            },
+            {
+              "id": "c2",
+              "operator": { "type": "string", "operation": "notContains" },
+              "leftValue": "={{ $json.current_stage?.name ?? '' }}",
+              "rightValue": "Phone Screen"
+            },
+            {
+              "id": "c3",
+              "operator": { "type": "string", "operation": "notContains" },
+              "leftValue": "={{ $json.current_stage?.name ?? '' }}",
+              "rightValue": "Offer"
+            },
+            {
+              "id": "c4",
+              "operator": { "type": "string", "operation": "notEquals" },
+              "leftValue": "={{ $json.current_stage?.name ?? '' }}",
+              "rightValue": "Hired"
+            },
+            {
+              "id": "c5",
+              "operator": { "type": "string", "operation": "notEmpty", "singleValue": true },
+              "leftValue": "={{ $json.current_stage?.name ?? '' }}"
+            }
+          ]
+        }
+      },
+      "typeVersion": 2.2
+    },
+    {
+      "id": "set-1",
+      "name": "Extract App Context",
+      "type": "n8n-nodes-base.set",
+      "position": [660, 0],
+      "parameters": {
+        "mode": "manual",
+        "fields": {
+          "values": [
+            { "name": "application_id", "type": "stringValue", "stringValue": "={{ $json.id }}" },
+            { "name": "candidate_id", "type": "stringValue", "stringValue": "={{ $json.candidate_id }}" },
+            { "name": "current_stage", "type": "stringValue", "stringValue": "={{ $json.current_stage?.name ?? '' }}" },
+            { "name": "job_id", "type": "stringValue", "stringValue": "={{ $json.jobs?.[0]?.id ?? '' }}" },
+            { "name": "job_name", "type": "stringValue", "stringValue": "={{ $json.jobs?.[0]?.name ?? '' }}" },
+            { "name": "recruiter_name", "type": "stringValue", "stringValue": "={{ $json.recruiter?.name ?? 'N/A' }}" }
+          ]
+        },
+        "options": {}
+      },
+      "typeVersion": 3.4
+    },
+    {
+      "id": "http-2",
+      "name": "Gem: Get Candidate",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [880, 0],
+      "parameters": {
+        "url": "=https://api.gem.com/v0/candidates/{{ $json.candidate_id }}",
+        "method": "GET",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        }
+      },
+      "typeVersion": 4.2
+    },
+    {
+      "id": "http-3",
+      "name": "Gem: Get Scorecards",
+      "type": "n8n-nodes-base.httpRequest",
+      "onError": "continueRegularOutput",
+      "position": [1100, 0],
+      "parameters": {
+        "url": "https://api.gem.com/ats/v0/scorecards/",
+        "method": "GET",
+        "options": {},
+        "sendQuery": true,
+        "sendHeaders": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "application_id",
+              "value": "={{ $('Extract App Context').item.json.application_id }}"
+            }
+          ]
+        },
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        }
+      },
+      "typeVersion": 4.2
+    },
+    {
+      "id": "http-4",
+      "name": "Gem: Get Job Details",
+      "type": "n8n-nodes-base.httpRequest",
+      "onError": "continueRegularOutput",
+      "position": [1320, 0],
+      "parameters": {
+        "url": "=https://api.gem.com/ats/v0/jobs/{{ $('Extract App Context').item.json.job_id }}",
+        "method": "GET",
+        "options": {},
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        }
+      },
+      "typeVersion": 4.2
+    },
+    {
+      "id": "set-2",
+      "name": "Compile All Context",
+      "type": "n8n-nodes-base.set",
+      "position": [1540, 0],
+      "parameters": {
+        "mode": "manual",
+        "fields": {
+          "values": [
+            { "name": "candidate_name", "type": "stringValue", "stringValue": "={{ $('Gem: Get Candidate').item.json.first_name }} {{ $('Gem: Get Candidate').item.json.last_name }}" },
+            { "name": "candidate_title", "type": "stringValue", "stringValue": "={{ $('Gem: Get Candidate').item.json.title ?? 'N/A' }}" },
+            { "name": "candidate_company", "type": "stringValue", "stringValue": "={{ $('Gem: Get Candidate').item.json.company ?? 'N/A' }}" },
+            { "name": "candidate_location", "type": "stringValue", "stringValue": "={{ $('Gem: Get Candidate').item.json.location ?? 'N/A' }}" },
+            { "name": "candidate_linkedin", "type": "stringValue", "stringValue": "={{ $('Gem: Get Candidate').item.json.linked_in_handle ?? 'N/A' }}" },
+            { "name": "job_name", "type": "stringValue", "stringValue": "={{ $('Extract App Context').item.json.job_name }}" },
+            { "name": "job_id", "type": "stringValue", "stringValue": "={{ $('Extract App Context').item.json.job_id }}" },
+            { "name": "current_stage", "type": "stringValue", "stringValue": "={{ $('Extract App Context').item.json.current_stage }}" },
+            { "name": "recruiter_name", "type": "stringValue", "stringValue": "={{ $('Extract App Context').item.json.recruiter_name }}" },
+            { "name": "application_id", "type": "stringValue", "stringValue": "={{ $('Extract App Context').item.json.application_id }}" },
+            { "name": "scorecard_data", "type": "stringValue", "stringValue": "={{ JSON.stringify($('Gem: Get Scorecards').item.json) }}" },
+            { "name": "job_details", "type": "stringValue", "stringValue": "={{ JSON.stringify($('Gem: Get Job Details').item.json) }}" }
+          ]
+        },
+        "options": {}
+      },
+      "typeVersion": 3.4
+    },
+    {
+      "id": "gdrive-1",
+      "name": "Google Drive: Find RAD",
+      "type": "n8n-nodes-base.googleDrive",
+      "onError": "continueRegularOutput",
+      "position": [1760, 0],
+      "parameters": {
+        "limit": 1,
+        "options": {},
+        "resource": "fileFolder",
+        "operation": "search",
+        "queryString": "=name contains '{{ $json.job_name }}' and name contains 'RAD'"
+      },
+      "typeVersion": 3
+    },
+    {
+      "id": "gdrive-2",
+      "name": "Google Drive: Download RAD",
+      "type": "n8n-nodes-base.googleDrive",
+      "onError": "continueRegularOutput",
+      "position": [1980, 0],
+      "parameters": {
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $json.id ?? '' }}"
+        },
+        "options": {},
+        "resource": "file",
+        "operation": "download"
+      },
+      "typeVersion": 3
+    },
+    {
+      "id": "http-5",
+      "name": "Gemini: Generate Prep Packet",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [2200, 0],
+      "parameters": {
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        "method": "POST",
+        "options": {},
+        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"You are an expert recruiting operations AI at a high-growth company. Generate a comprehensive Interviewer Prep Packet.\\n\\nCANDIDATE: {{ $('Compile All Context').item.json.candidate_name }}\\nCURRENT TITLE: {{ $('Compile All Context').item.json.candidate_title }}\\nCOMPANY: {{ $('Compile All Context').item.json.candidate_company }}\\nLOCATION: {{ $('Compile All Context').item.json.candidate_location }}\\nLINKEDIN: {{ $('Compile All Context').item.json.candidate_linkedin }}\\n\\nROLE: {{ $('Compile All Context').item.json.job_name }}\\nINTERVIEW STAGE: {{ $('Compile All Context').item.json.current_stage }}\\nJOB DETAILS: {{ $('Compile All Context').item.json.job_details }}\\n\\nPRIOR SCORECARDS: {{ $('Compile All Context').item.json.scorecard_data }}\\n\\nROLE ALIGNMENT DOCUMENT: {{ $json.data ?? 'No RAD found. Use job details above.' }}\\n\\nGenerate these sections in clean Slack-friendly markdown:\\n\\n1. CANDIDATE SNAPSHOT - 3 sentence exec summary\\n2. FOCUS AREAS - 3-5 competency areas to probe with WHY each matters\\n3. RECOMMENDED QUESTIONS - 8-10 behavioral/technical questions in STAR format with follow-ups\\n4. SCORING RUBRIC - For each focus area: Strong Signal / Acceptable / Concern\\n5. RED FLAGS - 3-5 specific things to watch\\n6. DO NOT ASK - Illegal questions, topics already covered, comp topics\\n7. LOGISTICS - Recruiter: {{ $('Compile All Context').item.json.recruiter_name }}, Stage: {{ $('Compile All Context').item.json.current_stage }}\\n\\nBe specific, actionable, concise. 5 min read, 10x more effective interviewer.\"\n    }]\n  }],\n  \"generationConfig\": {\"temperature\": 0.7, \"maxOutputTokens\": 4096}\n}",
+        "sendBody": true,
+        "sendHeaders": true,
+        "specifyBody": "json",
+        "headerParameters": {
+          "parameters": [
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        }
+      },
+      "typeVersion": 4.2
+    },
+    {
+      "id": "set-3",
+      "name": "Format Output",
+      "type": "n8n-nodes-base.set",
+      "position": [2420, 0],
+      "parameters": {
+        "mode": "manual",
+        "fields": {
+          "values": [
+            { "name": "prep_packet", "type": "stringValue", "stringValue": "={{ $json.candidates?.[0]?.content?.parts?.[0]?.text ?? 'Error generating packet' }}" },
+            { "name": "candidate_name", "type": "stringValue", "stringValue": "={{ $('Compile All Context').item.json.candidate_name }}" },
+            { "name": "job_name", "type": "stringValue", "stringValue": "={{ $('Compile All Context').item.json.job_name }}" },
+            { "name": "current_stage", "type": "stringValue", "stringValue": "={{ $('Compile All Context').item.json.current_stage }}" },
+            { "name": "recruiter_name", "type": "stringValue", "stringValue": "={{ $('Compile All Context').item.json.recruiter_name }}" }
+          ]
+        },
+        "options": {}
+      },
+      "typeVersion": 3.4
+    },
+    {
+      "id": "slack-1",
+      "name": "Slack: Send Prep Packet",
+      "type": "n8n-nodes-base.slack",
+      "position": [2640, -100],
+      "parameters": {
+        "text": "=*Interview Prep Packet*\n*Candidate:* {{ $json.candidate_name }}\n*Role:* {{ $json.job_name }}\n*Stage:* {{ $json.current_stage }}\n\n---\n\n{{ $json.prep_packet }}\n\n---\n_Auto-generated | Recruiter: {{ $json.recruiter_name }}_",
+        "select": "channel",
+        "resource": "message",
+        "channelId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_SLACK_CHANNEL_ID"
+        },
+        "operation": "post",
+        "messageType": "text",
+        "otherOptions": {}
+      },
+      "typeVersion": 2.4
+    },
+    {
+      "id": "email-1",
+      "name": "Email: Backup Delivery",
+      "type": "n8n-nodes-base.emailSend",
+      "position": [2640, 100],
+      "parameters": {
+        "message": "=Interview Prep Packet\n\nCandidate: {{ $json.candidate_name }}\nRole: {{ $json.job_name }}\nStage: {{ $json.current_stage }}\n\n{{ $json.prep_packet }}\n\n---\nAuto-generated by Interview Prep Bot\nRecruiter: {{ $json.recruiter_name }}",
+        "options": {},
+        "subject": "=Interview Prep: {{ $json.candidate_name }} - {{ $json.job_name }}",
+        "toEmail": "YOUR_EMAIL",
+        "emailType": "text",
+        "fromEmail": "YOUR_FROM_EMAIL"
+      },
+      "typeVersion": 2.1
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": {
+      "main": [[{ "node": "Gem: List Recent Applications", "type": "main", "index": 0 }]]
+    },
+    "Gem: List Recent Applications": {
+      "main": [[{ "node": "Is Interview Stage?", "type": "main", "index": 0 }]]
+    },
+    "Is Interview Stage?": {
+      "main": [[{ "node": "Extract App Context", "type": "main", "index": 0 }]]
+    },
+    "Extract App Context": {
+      "main": [[{ "node": "Gem: Get Candidate", "type": "main", "index": 0 }]]
+    },
+    "Gem: Get Candidate": {
+      "main": [[{ "node": "Gem: Get Scorecards", "type": "main", "index": 0 }]]
+    },
+    "Gem: Get Scorecards": {
+      "main": [[{ "node": "Gem: Get Job Details", "type": "main", "index": 0 }]]
+    },
+    "Gem: Get Job Details": {
+      "main": [[{ "node": "Compile All Context", "type": "main", "index": 0 }]]
+    },
+    "Compile All Context": {
+      "main": [[{ "node": "Google Drive: Find RAD", "type": "main", "index": 0 }]]
+    },
+    "Google Drive: Find RAD": {
+      "main": [[{ "node": "Google Drive: Download RAD", "type": "main", "index": 0 }]]
+    },
+    "Google Drive: Download RAD": {
+      "main": [[{ "node": "Gemini: Generate Prep Packet", "type": "main", "index": 0 }]]
+    },
+    "Gemini: Generate Prep Packet": {
+      "main": [[{ "node": "Format Output", "type": "main", "index": 0 }]]
+    },
+    "Format Output": {
+      "main": [[
+        { "node": "Slack: Send Prep Packet", "type": "main", "index": 0 },
+        { "node": "Email: Backup Delivery", "type": "main", "index": 0 }
+      ]]
+    }
+  }
+}
