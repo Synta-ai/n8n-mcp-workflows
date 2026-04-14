@@ -1,0 +1,372 @@
+{
+  "name": "Airtable Checkbox Research Pipeline",
+  "nodes": [
+    {
+      "id": "airtableTrigger",
+      "name": "Stable-Live Checkbox Triggered",
+      "type": "n8n-nodes-base.airtableTrigger",
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "baseId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.AIRTABLE_BASE_ID }}"
+        },
+        "tableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "News"
+        },
+        "triggerField": "Last Modified Time",
+        "additionalFields": {
+          "formula": "{Stable-Live}=TRUE()"
+        }
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "getRecordDetails",
+      "name": "Get Full Record",
+      "type": "n8n-nodes-base.airtable",
+      "position": [
+        250,
+        300
+      ],
+      "parameters": {
+        "id": "={{ $json.id }}",
+        "base": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.AIRTABLE_BASE_ID }}"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "id",
+          "value": "News"
+        },
+        "operation": "get"
+      },
+      "typeVersion": 2.1
+    },
+    {
+      "id": "prepareResearchPrompt",
+      "name": "Prepare Research Prompt",
+      "type": "n8n-nodes-base.set",
+      "position": [
+        500,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "recordId",
+              "name": "recordId",
+              "type": "string",
+              "value": "={{ $json.id }}"
+            },
+            {
+              "id": "title",
+              "name": "title",
+              "type": "string",
+              "value": "={{ $json.fields.Title }}"
+            },
+            {
+              "id": "summary",
+              "name": "summary",
+              "type": "string",
+              "value": "={{ $json.fields.Summary }}"
+            },
+            {
+              "id": "url",
+              "name": "url",
+              "type": "string",
+              "value": "={{ $json.fields.URL }}"
+            },
+            {
+              "id": "topics",
+              "name": "topics",
+              "type": "string",
+              "value": "={{ $json.fields.Topics }}"
+            },
+            {
+              "id": "researchPrompt",
+              "name": "researchPrompt",
+              "type": "string",
+              "value": "=Research the following news item thoroughly and provide up-to-date context:\n\nTitle: {{ $json.fields.Title }}\nSummary: {{ $json.fields.Summary }}\nURL: {{ $json.fields.URL }}\n\nProvide:\n1. Latest developments and context on this topic (last 7 days)\n2. Key organizations and companies involved\n3. Important figures or spokespersons mentioned\n4. Any regulatory or market implications\n5. Related news or announcements"
+            }
+          ]
+        },
+        "includeOtherFields": false
+      },
+      "typeVersion": 3.4
+    },
+    {
+      "id": "perplexityResearch",
+      "name": "AI Research (Perplexity)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "position": [
+        750,
+        300
+      ],
+      "parameters": {
+        "text": "={{ $json.researchPrompt }}",
+        "promptType": "define"
+      },
+      "typeVersion": 1.5
+    },
+    {
+      "id": "perplexityModel",
+      "name": "Perplexity Sonar",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "position": [
+        750,
+        520
+      ],
+      "parameters": {
+        "model": "perplexity/sonar",
+        "options": {
+          "temperature": 0.3
+        }
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "prepareAnalysisPrompt",
+      "name": "Prepare Analysis Prompt",
+      "type": "n8n-nodes-base.set",
+      "position": [
+        1000,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "recordId",
+              "name": "recordId",
+              "type": "string",
+              "value": "={{ $('Prepare Research Prompt').item.json.recordId }}"
+            },
+            {
+              "id": "title",
+              "name": "title",
+              "type": "string",
+              "value": "={{ $('Prepare Research Prompt').item.json.title }}"
+            },
+            {
+              "id": "summary",
+              "name": "summary",
+              "type": "string",
+              "value": "={{ $('Prepare Research Prompt').item.json.summary }}"
+            },
+            {
+              "id": "topics",
+              "name": "topics",
+              "type": "string",
+              "value": "={{ $('Prepare Research Prompt').item.json.topics }}"
+            },
+            {
+              "id": "researchFindings",
+              "name": "researchFindings",
+              "type": "string",
+              "value": "={{ $json.text }}"
+            },
+            {
+              "id": "analysisPrompt",
+              "name": "analysisPrompt",
+              "type": "string",
+              "value": "=You are a research assistant for a live show called \"Stable-Live\" covering stablecoins, RWA (Real World Assets), and tokenization.\n\nBased on this news item and research findings, generate a comprehensive brief.\n\n## News Item\nTitle: {{ $('Prepare Research Prompt').item.json.title }}\nSummary: {{ $('Prepare Research Prompt').item.json.summary }}\nTopics: {{ $('Prepare Research Prompt').item.json.topics }}\n\n## Research Findings\n{{ $json.text }}\n\n## Generate the following (in markdown format):\n\n### Conversation Angles\nProvide 3-5 compelling conversation angles for a live discussion. Each angle should:\n- Be framed as a question or discussion topic\n- Be relevant to the Stable-Live audience interested in stablecoins, RWA, and tokenization\n- Offer different perspectives (technical, market, regulatory, user impact)\n\n### Key Talking Points\nList 5-7 key talking points and questions the host should address.\n\n### Guest Suggestions\nSuggest 2-3 potential guests who would be good to interview about this topic. For each:\n- Name and title/role\n- Organization\n- Why they'd be a good guest\n- Twitter/LinkedIn handle if known (or likely handle format)\n\n### Research Brief\nA 2-3 paragraph summary synthesizing the key information for the show host."
+            }
+          ]
+        },
+        "includeOtherFields": false
+      },
+      "typeVersion": 3.4
+    },
+    {
+      "id": "claudeAnalysis",
+      "name": "AI Analysis (Claude)",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "position": [
+        1280,
+        300
+      ],
+      "parameters": {
+        "text": "={{ $json.analysisPrompt }}",
+        "promptType": "define"
+      },
+      "typeVersion": 1.5
+    },
+    {
+      "id": "claudeModel",
+      "name": "Claude 3.5 Sonnet",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "position": [
+        1280,
+        520
+      ],
+      "parameters": {
+        "model": "anthropic/claude-3.5-sonnet",
+        "options": {
+          "temperature": 0.5,
+          "maxTokensToSample": "[REDACTED]"
+        }
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "parseAIOutput",
+      "name": "Parse AI Output",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1530,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const fullText = $json.text || '';\nconst recordId = $('Prepare Analysis Prompt').item.json.recordId;\n\n// Helper function to extract section content\nfunction extractSection(text, sectionName) {\n  const regex = new RegExp(`###\\\\s*${sectionName}[\\\\s\\\\S]*?(?=###|$)`, 'i');\n  const match = text.match(regex);\n  if (match) {\n    return match[0].replace(new RegExp(`###\\\\s*${sectionName}`, 'i'), '').trim();\n  }\n  return '';\n}\n\n// Extract each section\nconst conversationAngles = extractSection(fullText, 'Conversation Angles');\nconst talkingPoints = extractSection(fullText, 'Key Talking Points');\nconst guestSuggestions = extractSection(fullText, 'Guest Suggestions');\nconst researchBrief = extractSection(fullText, 'Research Brief');\n\nreturn {\n  json: {\n    recordId: recordId,\n    conversationAngles: conversationAngles,\n    guestSuggestions: guestSuggestions,\n    researchBrief: researchBrief + '\\n\\n---\\n\\n**Key Talking Points:**\\n' + talkingPoints,\n    fullAnalysis: fullText\n  }\n};"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "updateAirtable",
+      "name": "Update Airtable Record",
+      "type": "n8n-nodes-base.airtable",
+      "position": [
+        1780,
+        300
+      ],
+      "parameters": {
+        "id": "={{ $json.recordId }}",
+        "base": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.AIRTABLE_BASE_ID }}"
+        },
+        "table": {
+          "__rl": true,
+          "mode": "id",
+          "value": "News"
+        },
+        "columns": {
+          "value": {
+            "Status": "Researched",
+            "Research Brief": "={{ $json.researchBrief }}",
+            "Guest Suggestions": "={{ $json.guestSuggestions }}",
+            "Conversation Angles": "={{ $json.conversationAngles }}"
+          },
+          "mappingMode": "defineBelow"
+        },
+        "operation": "update"
+      },
+      "typeVersion": 2.1
+    }
+  ],
+  "connections": {
+    "Get Full Record": {
+      "main": [
+        [
+          {
+            "node": "Prepare Research Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Output": {
+      "main": [
+        [
+          {
+            "node": "Update Airtable Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Perplexity Sonar": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Research (Perplexity)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude 3.5 Sonnet": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Analysis (Claude)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Analysis (Claude)": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Analysis Prompt": {
+      "main": [
+        [
+          {
+            "node": "AI Analysis (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Research Prompt": {
+      "main": [
+        [
+          {
+            "node": "AI Research (Perplexity)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Research (Perplexity)": {
+      "main": [
+        [
+          {
+            "node": "Prepare Analysis Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stable-Live Checkbox Triggered": {
+      "main": [
+        [
+          {
+            "node": "Get Full Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

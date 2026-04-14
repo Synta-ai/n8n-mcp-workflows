@@ -1,0 +1,461 @@
+{
+  "name": "Academic Literature Review Generator",
+  "nodes": [
+    {
+      "id": "form-input",
+      "name": "Research Parameters Form",
+      "type": "n8n-nodes-base.formTrigger",
+      "position": [
+        250,
+        500
+      ],
+      "webhookId": "literature-review-form",
+      "parameters": {
+        "path": "literature-review",
+        "formTitle": "Literature Review Request",
+        "formFields": {
+          "values": [
+            {
+              "fieldType": "text",
+              "fieldLabel": "Research Topic",
+              "requiredField": true
+            },
+            {
+              "fieldType": "text",
+              "fieldLabel": "Keywords (comma-separated)",
+              "requiredField": true
+            },
+            {
+              "fieldType": "dropdown",
+              "fieldLabel": "Date Range (Years)",
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "Last 1 year"
+                  },
+                  {
+                    "option": "Last 3 years"
+                  },
+                  {
+                    "option": "Last 5 years"
+                  },
+                  {
+                    "option": "Last 10 years"
+                  }
+                ]
+              },
+              "requiredField": true
+            },
+            {
+              "fieldType": "number",
+              "fieldLabel": "Number of Papers to Review",
+              "requiredField": true
+            },
+            {
+              "fieldType": "textarea",
+              "fieldLabel": "Focus Areas",
+              "requiredField": false
+            }
+          ]
+        },
+        "responseMode": "lastNode",
+        "formDescription": "Enter your research topic and parameters for the literature review."
+      },
+      "typeVersion": 2.3
+    },
+    {
+      "id": "semantic-scholar-search",
+      "name": "Search Semantic Scholar",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        500,
+        400
+      ],
+      "parameters": {
+        "url": "https://[domain]/graph/v1/paper/search",
+        "method": "GET",
+        "options": {},
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $json['Keywords (comma-separated)'] }}"
+            },
+            {
+              "name": "limit",
+              "value": "={{ $json['Number of Papers to Review'] }}"
+            },
+            {
+              "name": "fields",
+              "value": "paperId,title,abstract,authors,year,citationCount,venue,openAccessPdf,externalIds"
+            }
+          ]
+        }
+      },
+      "typeVersion": 4.2
+    },
+    {
+      "id": "crossref-search",
+      "name": "Search CrossRef",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        500,
+        600
+      ],
+      "parameters": {
+        "url": "https://[domain]/works",
+        "method": "GET",
+        "options": {},
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "query",
+              "value": "={{ $('Research Parameters Form').item.json['Research Topic'] }}"
+            },
+            {
+              "name": "rows",
+              "value": "={{ $('Research Parameters Form').item.json['Number of Papers to Review'] }}"
+            },
+            {
+              "name": "filter",
+              "value": "type:journal-article"
+            }
+          ]
+        }
+      },
+      "typeVersion": 4.2
+    },
+    {
+      "id": "merge-results",
+      "name": "Merge & Deduplicate",
+      "type": "n8n-nodes-base.merge",
+      "position": [
+        750,
+        500
+      ],
+      "parameters": {
+        "mode": "combine",
+        "options": {
+          "clashHandling": {
+            "values": {
+              "resolveClash": "preferInput1"
+            }
+          }
+        },
+        "mergeByFields": {
+          "values": [
+            {
+              "field1": "title",
+              "field2": "title"
+            }
+          ]
+        }
+      },
+      "typeVersion": 3.2
+    },
+    {
+      "id": "normalize-data",
+      "name": "Normalize Paper Data",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        950,
+        500
+      ],
+      "parameters": {
+        "jsCode": "const papers = [];\n\nfor (const item of $input.all()) {\n  const data = item.json;\n  \n  if (data.paperId) {\n    papers.push({\n      id: data.paperId,\n      title: data.title || 'Untitled',\n      abstract: data.abstract || 'No abstract available',\n      authors: data.authors?.map(a => a.name).join(', ') || 'Unknown',\n      year: data.year || 'N/A',\n      citations: data.citationCount || 0,\n      venue: data.venue || 'Unknown venue',\n      doi: data.externalIds?.DOI || null,\n      pdfUrl: data.openAccessPdf?.url || null,\n      source: 'Semantic Scholar'\n    });\n  }\n  \n  if (data.DOI && !data.paperId) {\n    papers.push({\n      id: data.DOI,\n      title: data.title?.[0] || 'Untitled',\n      abstract: data.abstract || 'No abstract available',\n      authors: data.author?.map(a => `${a.given} ${a.family}`).join(', ') || 'Unknown',\n      year: data.published?.['date-parts']?.[0]?.[0] || 'N/A',\n      citations: data['[REDACTED]'] || 0,\n      venue: data['container-title']?.[0] || 'Unknown venue',\n      doi: data.DOI,\n      pdfUrl: data.link?.find(l => l['content-type'] === 'application/pdf')?.URL || null,\n      source: 'CrossRef'\n    });\n  }\n}\n\npapers.sort((a, b) => b.citations - a.citations);\n\nreturn papers.map(paper => ({ json: paper }));",
+        "language": "javaScript"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "openai-model-analysis",
+      "name": "OpenAI Model for Analysis",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "position": [
+        1200,
+        400
+      ],
+      "parameters": {
+        "model": {
+          "mode": "list",
+          "value": "gpt-4o-mini"
+        },
+        "options": {
+          "maxTokens": "[REDACTED]",
+          "temperature": 0.3
+        }
+      },
+      "typeVersion": 1.2
+    },
+    {
+      "id": "ai-analysis",
+      "name": "AI Paper Analysis",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "position": [
+        1200,
+        500
+      ],
+      "parameters": {
+        "text": "=You are an expert academic research assistant specializing in literature reviews. Analyze the following paper and extract key information.\n\n**Paper Title:** {{ $json.title }}\n**Authors:** {{ $json.authors }}\n**Year:** {{ $json.year }}\n**Venue:** {{ $json.venue }}\n**Citations:** {{ $json.citations }}\n\n**Abstract:**\n{{ $json.abstract }}\n\nProvide a structured analysis in JSON format with these exact fields:\n- mainContribution: 2-3 sentences describing the main contribution\n- methodology: key methods used\n- keyFindings: array of key findings as bullet points\n- limitations: any limitations apparent from abstract\n- relevanceScore: number from 1-10\n- [REDACTED]: one of (Foundational, Methodology, Application, Review, etc.)\n\nRespond only with the JSON object, no other text.",
+        "options": {
+          "systemMessage": "You are an expert academic research assistant. Your task is to analyze research papers and extract structured information in JSON format."
+        },
+        "promptType": "define"
+      },
+      "typeVersion": 3
+    },
+    {
+      "id": "aggregate-results",
+      "name": "Aggregate Review Data",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1450,
+        500
+      ],
+      "parameters": {
+        "jsCode": "const allPapers = $input.all();\nconst researchTopic = $('Research Parameters Form').first().json['Research Topic'];\nconst focusAreas = $('Research Parameters Form').first().json['Focus Areas'] || 'General overview';\n\nconst analyses = allPapers.map(item => {\n  let analysis = {};\n  try {\n    const response = item.json.output || item.json.text || '{}';\n    analysis = typeof response === 'string' ? JSON.parse(response) : response;\n  } catch {\n    analysis = { error: 'Failed to parse analysis' };\n  }\n  return {\n    paper: {\n      title: item.json.title,\n      authors: item.json.authors,\n      year: item.json.year,\n      citations: item.json.citations,\n      venue: item.json.venue,\n      doi: item.json.doi\n    },\n    analysis: analysis\n  };\n});\n\nconst categorized = {};\nfor (const { paper, analysis } of analyses) {\n  const category = analysis.[REDACTED] || 'Uncategorized';\n  if (!categorized[category]) categorized[category] = [];\n  categorized[category].push({ paper, analysis });\n}\n\nconst stats = {\n  totalPapers: analyses.length,\n  averageCitations: Math.round(analyses.reduce((sum, a) => sum + (a.paper.citations || 0), 0) / analyses.length),\n  yearRange: {\n    earliest: Math.min(...analyses.map(a => parseInt(a.paper.year) || 9999)),\n    latest: Math.max(...analyses.map(a => parseInt(a.paper.year) || 0))\n  },\n  topVenues: [...new Set(analyses.map(a => a.paper.venue))].slice(0, 5)\n};\n\nreturn [{\n  json: {\n    researchTopic,\n    focusAreas,\n    statistics: stats,\n    categorizedPapers: categorized,\n    allAnalyses: analyses,\n    generatedAt: new Date().toISOString()\n  }\n}];",
+        "language": "javaScript"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "openai-model-review",
+      "name": "OpenAI Model for Review",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "position": [
+        1700,
+        400
+      ],
+      "parameters": {
+        "model": {
+          "mode": "list",
+          "value": "gpt-4o"
+        },
+        "options": {
+          "maxTokens": "[REDACTED]",
+          "temperature": 0.5
+        }
+      },
+      "typeVersion": 1.2
+    },
+    {
+      "id": "generate-review",
+      "name": "Generate Literature Review",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "position": [
+        1700,
+        500
+      ],
+      "parameters": {
+        "text": "=You are an expert academic writer. Create a comprehensive literature review document based on the following analyzed papers.\n\n**Research Topic:** {{ $json.researchTopic }}\n**Focus Areas:** {{ $json.focusAreas }}\n\n**Statistics:**\n- Total Papers Reviewed: {{ $json.statistics.totalPapers }}\n- Average Citations: {{ $json.statistics.averageCitations }}\n- Year Range: {{ $json.statistics.yearRange.earliest }} - {{ $json.statistics.yearRange.latest }}\n\n**Categorized Papers:**\n{{ JSON.stringify($json.categorizedPapers, null, 2) }}\n\nGenerate a structured literature review with:\n\n1. **Executive Summary** (150-200 words)\n2. **Introduction** - Context and importance of the research area\n3. **Methodology** - How papers were selected and analyzed\n4. **Thematic Analysis** - Organize findings by themes/categories\n5. **Key Findings** - Major discoveries and trends\n6. **Research Gaps** - Identified gaps and opportunities\n7. **Conclusion** - Summary and recommendations for future research\n8. **References** - Formatted citations (APA style)\n\nWrite in academic prose, maintaining objectivity and proper citation practices. Use transition phrases between sections.",
+        "options": {
+          "systemMessage": "You are an expert academic writer specializing in literature reviews. Your task is to synthesize research findings into comprehensive, well-structured academic documents."
+        },
+        "promptType": "define"
+      },
+      "typeVersion": 3
+    },
+    {
+      "id": "format-document",
+      "name": "Format as Markdown",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1950,
+        400
+      ],
+      "parameters": {
+        "jsCode": "const data = $input.first().json;\nconst review = data.output || data.text || 'Review generation failed';\nconst aggData = $('Aggregate Review Data').first().json;\nconst stats = aggData.statistics;\nconst topic = aggData.researchTopic;\n\nconst markdown = `# Literature Review: ${topic}\n\n**Generated:** ${new Date().toLocaleDateString()}\n**Papers Analyzed:** ${stats.totalPapers}\n**Citation Range:** ${stats.yearRange.earliest} - ${stats.yearRange.latest}\n\n---\n\n${review}\n\n---\n\n## Appendix: Paper Analysis Summary\n\n| Paper | Year | Citations | Category | Relevance |\n|-------|------|-----------|----------|------------|\n${aggData.allAnalyses.map(a => \n  `| ${a.paper.title.substring(0, 50)}... | ${a.paper.year} | ${a.paper.citations} | ${a.analysis.[REDACTED] || 'N/A'} | ${a.analysis.relevanceScore || 'N/A'}/10 |`\n).join('\\n')}\n\n---\n\n*This literature review was generated using an automated workflow powered by n8n.*\n`;\n\nreturn [{ json: { markdown, topic, generatedAt: new Date().toISOString() } }];",
+        "language": "javaScript"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "create-file",
+      "name": "Create Review Document",
+      "type": "n8n-nodes-base.convertToFile",
+      "position": [
+        2200,
+        400
+      ],
+      "parameters": {
+        "options": {
+          "fileName": "={{ 'literature_review_' + $json.topic.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 30) + '_' + new Date().toISOString().split('T')[0] + '.md' }}"
+        },
+        "operation": "toText",
+        "sourceProperty": "markdown",
+        "binaryPropertyName": "data"
+      },
+      "typeVersion": 1.1
+    },
+    {
+      "id": "success-output",
+      "name": "Success Summary",
+      "type": "n8n-nodes-base.set",
+      "position": [
+        2450,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "summary1",
+              "name": "status",
+              "type": "string",
+              "value": "complete"
+            },
+            {
+              "id": "summary2",
+              "name": "message",
+              "type": "string",
+              "value": "=## \ud83d\udcda Literature Review Complete!\n\n### Summary\n- **Topic:** {{ $('Research Parameters Form').first().json['Research Topic'] }}\n- **Papers Analyzed:** {{ $('Aggregate Review Data').first().json.statistics.totalPapers }}\n- **Year Range:** {{ $('Aggregate Review Data').first().json.statistics.yearRange.earliest }} - {{ $('Aggregate Review Data').first().json.statistics.yearRange.latest }}\n- **Average Citations:** {{ $('Aggregate Review Data').first().json.statistics.averageCitations }}\n\n\u2705 Your literature review document has been generated successfully!"
+            }
+          ]
+        }
+      },
+      "typeVersion": 3.4
+    }
+  ],
+  "connections": {
+    "Search CrossRef": {
+      "main": [
+        [
+          {
+            "node": "Merge & Deduplicate",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "AI Paper Analysis": {
+      "main": [
+        [
+          {
+            "node": "Aggregate Review Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format as Markdown": {
+      "main": [
+        [
+          {
+            "node": "Create Review Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge & Deduplicate": {
+      "main": [
+        [
+          {
+            "node": "Normalize Paper Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Paper Data": {
+      "main": [
+        [
+          {
+            "node": "AI Paper Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate Review Data": {
+      "main": [
+        [
+          {
+            "node": "Generate Literature Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Review Document": {
+      "main": [
+        [
+          {
+            "node": "Success Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Model for Review": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Generate Literature Review",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Semantic Scholar": {
+      "main": [
+        [
+          {
+            "node": "Merge & Deduplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Research Parameters Form": {
+      "main": [
+        [
+          {
+            "node": "Search Semantic Scholar",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Search CrossRef",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Model for Analysis": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Paper Analysis",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Literature Review": {
+      "main": [
+        [
+          {
+            "node": "Format as Markdown",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}

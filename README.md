@@ -16,6 +16,7 @@ Real n8n workflows from production, exported and anonymised from synta mcp usage
 | `multi-source-lead-scorer.json` | Collect leads from form, email and social DMs, score with AI, route hot leads to Slack |
 | `call-transcript-reviewer-ghl.json` | Pull call transcripts from Dialpad via GHL webhook, review with Claude, save scored results to Sheets |
 | `google-maps-lead-scraper.json` | Scrape Google Maps daily, extract emails from business websites, AI-enrich and score each lead, save to Airtable |
+| `business-listing-monitor.json` | Run daily, fetch search criteria from Postgres, scrape BizBuySell/Flippa/Empire Flippers and others, hash each listing for deduplication, notify only on genuinely new results |
 
 ### customer-support/
 | File | Use Case |
@@ -37,6 +38,12 @@ Real n8n workflows from production, exported and anonymised from synta mcp usage
 |---|---|
 | `email-attachment-document-processor.json` | Extract, classify and archive email attachments to Google Drive |
 | `email-travel-booking-scanner.json` | Scan Gmail hourly for travel bookings, extract with Claude, deduplicate, update trip log |
+
+### research-intelligence/
+| File | Use Case |
+|---|---|
+| `airtable-checkbox-research-pipeline.json` | Tick a checkbox in Airtable, workflow pulls the full record, sends it to Perplexity Sonar for live research, passes results to Claude 3.5 for analysis, writes structured output (brief, conversation angles, guest suggestions) back into the record |
+| `academic-literature-review-generator.json` | Form submission kicks off a full literature review — searches Semantic Scholar and CrossRef simultaneously, deduplicates, runs each paper through GPT-4 for analysis, generates a structured review with GPT-4o, and exports it as a markdown document |
 
 ## How to use
 

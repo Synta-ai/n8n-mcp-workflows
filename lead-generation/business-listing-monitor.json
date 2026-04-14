@@ -1,0 +1,387 @@
+{
+  "name": "Business Listing Monitor",
+  "nodes": [
+    {
+      "id": "cron-trigger",
+      "name": "Daily at 8 AM UTC",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [
+        240,
+        400
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "typeVersion": 1.2
+    },
+    {
+      "id": "fetch-criteria",
+      "name": "Fetch Search Criteria",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        460,
+        400
+      ],
+      "parameters": {
+        "query": "SELECT email, criteria FROM criteria ORDER BY updated_at DESC LIMIT 1;",
+        "operation": "executeQuery"
+      },
+      "typeVersion": 2.5
+    },
+    {
+      "id": "prepare-urls",
+      "name": "Prepare Scrape URLs",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        680,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Parse criteria and prepare for scraping\nconst criteriaData = $input.first().json;\nconst email = criteriaData.email;\nconst criteria = typeof criteriaData.criteria === 'string' ? JSON.parse(criteriaData.criteria) : criteriaData.criteria;\n\n// Extract form field values\nconst priceMin = criteria['Price Range Min ($)'] || 0;\nconst priceMax = criteria['Price Range Max ($)'] || 999999999;\nconst ebitdaMin = criteria['EBITDA Min ($)'] || 0;\nconst ebitdaMax = criteria['EBITDA Max ($)'] || 999999999;\nconst revenueMin = criteria['Revenue Min ($)'] || 0;\nconst revenueMax = criteria['Revenue Max ($)'] || 999999999;\nconst location = criteria['Location (city, state, or keywords)'] || '';\nconst industries = criteria['Industry Keywords (comma-separated)'] || '';\nconst selectedSites = criteria['Websites to Scrape'] || [];\n\n// Create search URLs for each selected site\nconst siteUrls = [];\n\nif (selectedSites.includes('BizBuySell')) {\n  let url = `https://www.bizbuysell.com/businesses-for-sale/?q=`;\n  if (location) url += `location:${encodeURIComponent(location)},`;\n  if (priceMin > 0) url += `price_min:${priceMin},`;\n  if (priceMax < 999999999) url += `price_max:${priceMax},`;\n  siteUrls.push({ site: 'BizBuySell', url, page: 1 });\n  siteUrls.push({ site: 'BizBuySell', url, page: 2 });\n}\n\nif (selectedSites.includes('BizQuest')) {\n  let url = `https://www.bizquest.com/businesses-for-sale/?`;\n  if (location) url += `location=${encodeURIComponent(location)}&`;\n  if (priceMin > 0) url += `asking_price_from=${priceMin}&`;\n  if (priceMax < 999999999) url += `asking_price_to=${priceMax}&`;\n  siteUrls.push({ site: 'BizQuest', url, page: 1 });\n}\n\nif (selectedSites.includes('Flippa')) {\n  let url = `https://flippa.com/search?filter%5Bproperty_type%5D=website&`;\n  if (priceMin > 0) url += `filter%5Bprice_min%5D=${priceMin}&`;\n  if (priceMax < 999999999) url += `filter%5Bprice_max%5D=${priceMax}&`;\n  siteUrls.push({ site: 'Flippa', url, page: 1 });\n}\n\nif (selectedSites.includes('Empire Flippers')) {\n  let url = `https://empireflippers.com/marketplace/?`;\n  if (priceMin > 0) url += `min_price=${priceMin}&`;\n  if (priceMax < 999999999) url += `max_price=${priceMax}&`;\n  siteUrls.push({ site: 'Empire Flippers', url, page: 1 });\n}\n\nif (selectedSites.includes('BusinessBroker.net')) {\n  siteUrls.push({ site: 'BusinessBroker.net', url: 'https://www.businessbroker.net/businesses-for-sale/', page: 1 });\n}\n\nif (selectedSites.includes('Sunbelt Business Brokers')) {\n  siteUrls.push({ site: 'Sunbelt Business Brokers', url: 'https://sunbeltnetwork.com/businesses-for-sale/', page: 1 });\n}\n\nif (selectedSites.includes('Transworld Business Advisors')) {\n  siteUrls.push({ site: 'Transworld Business Advisors', url: 'https://www.tworld.com/businesses-for-sale/', page: 1 });\n}\n\nif (selectedSites.includes('BizBen')) {\n  siteUrls.push({ site: 'BizBen', url: 'https://www.bizben.com/businesses-for-sale', page: 1 });\n}\n\nif (selectedSites.includes('DealStream')) {\n  siteUrls.push({ site: 'DealStream', url: 'https://www.dealstream.com/deals/', page: 1 });\n}\n\nif (selectedSites.includes('Axial')) {\n  siteUrls.push({ site: 'Axial', url: 'https://www.axial.net/businesses-for-sale/', page: 1 });\n}\n\nreturn siteUrls.map(item => ({\n  json: {\n    ...item,\n    email,\n    priceMin,\n    priceMax,\n    ebitdaMin,\n    ebitdaMax,\n    revenueMin,\n    revenueMax,\n    location,\n    industries\n  }\n}));"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "scrape-site",
+      "name": "Scrape Website",
+      "type": "n8n-nodes-base.httpRequest",
+      "maxTries": 3,
+      "position": [
+        900,
+        400
+      ],
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "method": "GET",
+        "options": {
+          "timeout": 30000,
+          "redirect": {
+            "redirect": {
+              "followRedirects": true
+            }
+          }
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            }
+          ]
+        }
+      },
+      "retryOnFail": true,
+      "typeVersion": 4.2,
+      "continueOnFail": true
+    },
+    {
+      "id": "parse-listings",
+      "name": "Parse and Filter Listings",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1120,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Extract listings from HTML\nconst html = $input.first().json.body || '';\nconst site = $input.first().json.site;\nconst criteria = $input.first().json;\n\nconst listings = [];\n\ntry {\n  // Generic extraction pattern (simplified - real scraping needs site-specific selectors)\n  // This is a placeholder - in production, use proper HTML parsing per site\n  \n  if (site === 'BizBuySell') {\n    // Simplified extraction - real implementation needs cheerio or similar\n    const titleRegex = /<a[^>]*class=\"[^\"]*listing-title[^\"]*\"[^>]*>([^<]+)<\\/a>/gi;\n    const priceRegex = /\\$([\\d,]+)/g;\n    const urlRegex = /href=\"([^\"]*\\/business-[^\"]+)\"/gi;\n    \n    let match;\n    let index = 0;\n    while ((match = titleRegex.exec(html)) !== null && index < 20) {\n      const title = match[1].trim();\n      const priceMatch = priceRegex.exec(html.substring(match.index, match.index + 500));\n      const price = priceMatch ? parseInt(priceMatch[1].replace(/,/g, '')) : 0;\n      const urlMatch = urlRegex.exec(html.substring(match.index - 200, match.index + 200));\n      const url = urlMatch ? `https://www.bizbuysell.com${urlMatch[1]}` : '';\n      \n      if (title && url) {\n        listings.push({\n          title,\n          price,\n          ebitda: null,\n          revenue: null,\n          location: criteria.location || 'N/A',\n          description: title,\n          url,\n          source: site\n        });\n      }\n      index++;\n    }\n  } else {\n    // For other sites, return placeholder data for now\n    // Real implementation would have site-specific parsers\n    listings.push({\n      title: `Sample listing from ${site}`,\n      price: 100000,\n      ebitda: null,\n      revenue: null,\n      location: criteria.location || 'N/A',\n      description: `Sample business listing from ${site}`,\n      url: criteria.url,\n      source: site\n    });\n  }\n} catch (error) {\n  console.error(`Error parsing ${site}:`, error);\n}\n\n// Filter by criteria\nconst filtered = listings.filter(listing => {\n  if (listing.price < criteria.priceMin || listing.price > criteria.priceMax) return false;\n  if (listing.ebitda && (listing.ebitda < criteria.ebitdaMin || listing.ebitda > criteria.ebitdaMax)) return false;\n  if (listing.revenue && (listing.revenue < criteria.revenueMin || listing.revenue > criteria.revenueMax)) return false;\n  return true;\n});\n\nreturn filtered.map(listing => ({ json: { ...listing, email: criteria.email } }));"
+      },
+      "typeVersion": 2,
+      "continueOnFail": true
+    },
+    {
+      "id": "compute-hash",
+      "name": "Compute Listing Hash",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1340,
+        400
+      ],
+      "parameters": {
+        "jsCode": "// Compute MD5 hash for deduplication\nconst crypto = require('crypto');\n\nconst items = $input.all();\nreturn items.map(item => {\n  const listing = item.json;\n  const hashInput = `${listing.title}||${listing.url}`;\n  const hash = crypto.createHash('md5').update(hashInput).digest('hex');\n  \n  return {\n    json: {\n      ...listing,\n      hash\n    }\n  };\n});"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "check-seen",
+      "name": "Check If Seen",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        1560,
+        400
+      ],
+      "parameters": {
+        "query": "SELECT hash FROM seen_listings WHERE hash = '{{ $json.hash }}' LIMIT 1;",
+        "operation": "executeQuery"
+      },
+      "typeVersion": 2.5
+    },
+    {
+      "id": "is-new",
+      "name": "Is New Listing?",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        1780,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "operator": {
+                "type": "isEmpty"
+              },
+              "leftValue": "={{ $json.hash }}",
+              "rightValue": ""
+            }
+          ]
+        }
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "insert-new",
+      "name": "Insert New Listing",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        2000,
+        300
+      ],
+      "parameters": {
+        "query": "INSERT INTO seen_listings (hash, details, timestamp)\nVALUES (\n  '={{ $('Compute Listing Hash').item.json.hash }}',\n  '={{ $('Compute Listing Hash').item.json | json }}',\n  CURRENT_TIMESTAMP\n)\nON CONFLICT (hash) DO NOTHING\nRETURNING *;",
+        "operation": "executeQuery"
+      },
+      "typeVersion": 2.5
+    },
+    {
+      "id": "format-output",
+      "name": "Format for Notification",
+      "type": "n8n-nodes-base.set",
+      "position": [
+        2220,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "email",
+              "name": "email",
+              "type": "string",
+              "value": "={{ $('Compute Listing Hash').item.json.email }}"
+            },
+            {
+              "id": "title",
+              "name": "title",
+              "type": "string",
+              "value": "={{ $('Compute Listing Hash').item.json.title }}"
+            },
+            {
+              "id": "price",
+              "name": "price",
+              "type": "number",
+              "value": "={{ $('Compute Listing Hash').item.json.price }}"
+            },
+            {
+              "id": "url",
+              "name": "url",
+              "type": "string",
+              "value": "={{ $('Compute Listing Hash').item.json.url }}"
+            },
+            {
+              "id": "source",
+              "name": "source",
+              "type": "string",
+              "value": "={{ $('Compute Listing Hash').item.json.source }}"
+            },
+            {
+              "id": "location",
+              "name": "location",
+              "type": "string",
+              "value": "={{ $('Compute Listing Hash').item.json.location }}"
+            },
+            {
+              "id": "description",
+              "name": "description",
+              "type": "string",
+              "value": "={{ $('Compute Listing Hash').item.json.description }}"
+            }
+          ]
+        }
+      },
+      "typeVersion": 3.4
+    },
+    {
+      "id": "trigger-notification",
+      "name": "Trigger Notification Workflow",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        2440,
+        300
+      ],
+      "parameters": {
+        "url": "https://[webhook-url]",
+        "method": "POST",
+        "options": {},
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "listings",
+              "value": "={{ $json }}"
+            }
+          ]
+        }
+      },
+      "typeVersion": 4.2
+    },
+    {
+      "id": "delay",
+      "name": "Rate Limit Delay",
+      "type": "n8n-nodes-base.wait",
+      "position": [
+        900,
+        520
+      ],
+      "parameters": {
+        "amount": 2
+      },
+      "typeVersion": 1.1
+    }
+  ],
+  "connections": {
+    "Check If Seen": {
+      "main": [
+        [
+          {
+            "node": "Is New Listing?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Scrape Website": {
+      "main": [
+        [
+          {
+            "node": "Parse and Filter Listings",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Rate Limit Delay",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is New Listing?": {
+      "main": [
+        [
+          {
+            "node": "Insert New Listing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Rate Limit Delay": {
+      "main": [
+        [
+          {
+            "node": "Scrape Website",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Daily at 8 AM UTC": {
+      "main": [
+        [
+          {
+            "node": "Fetch Search Criteria",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert New Listing": {
+      "main": [
+        [
+          {
+            "node": "Format for Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Scrape URLs": {
+      "main": [
+        [
+          {
+            "node": "Scrape Website",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Listing Hash": {
+      "main": [
+        [
+          {
+            "node": "Check If Seen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Search Criteria": {
+      "main": [
+        [
+          {
+            "node": "Prepare Scrape URLs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format for Notification": {
+      "main": [
+        [
+          {
+            "node": "Trigger Notification Workflow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse and Filter Listings": {
+      "main": [
+        [
+          {
+            "node": "Compute Listing Hash",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
